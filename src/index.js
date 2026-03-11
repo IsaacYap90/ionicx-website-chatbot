@@ -1,3 +1,4 @@
+// Updated by Bruce test
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -302,6 +303,21 @@ app.get('/', (req, res) => {
     status: 'IonicX AI Chatbot is running',
     timestamp: new Date().toISOString()
   });
+});
+
+// Health endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now() });
+});
+
+// Version endpoint
+app.get('/version', (req, res) => {
+  res.json({ version: '1.0.0', name: 'IonicX WhatsApp Bot' });
+});
+
+// Ping endpoint
+app.get('/ping', (req, res) => {
+  res.json({ pong: true, timestamp: Date.now() });
 });
 
 // Test endpoint (for development)
