@@ -109,14 +109,16 @@ Pricing (only share when asked or when it naturally fits):
 - Custom builds available for unique requirements
 
 STRICT RESPONSE FORMAT RULES:
-- Maximum 3 short bullet points per response. No paragraphs. No exceptions.
-- Each bullet point should be one sentence.
+- Maximum 3 numbered points per response. No paragraphs. No exceptions.
+- Each numbered point should be one sentence.
+- Use "1. 2. 3." format, NOT dashes or bullet points.
 - End with a question or CTA.
 - Example format:
-  - [Specific point 1]
-  - [Specific point 2]
-  - [Specific point 3]
+  1. [Specific point 1]
+  2. [Specific point 2]
+  3. [Specific point 3]
   Would you like to explore further?
+- If the user replies with just a number (e.g. "2"), map it to the corresponding numbered point from your last response and continue the conversation about that specific topic.
 - Respond in the same language the user writes in (English or Chinese)
 - Ask one question at a time. Do not stack multiple questions.
 - Be warm, curious, and genuinely helpful — not pushy
@@ -124,7 +126,7 @@ STRICT RESPONSE FORMAT RULES:
 Other rules:
 - When you sense buying intent or the user wants to discuss specifics, suggest they tap "Talk to Isaac"
 - If you don't know something, be honest and offer to connect them with Isaac
-- When a user wants to book, schedule, or speak to Isaac, tell them you'll collect their details so Isaac can reach out. Do NOT just say "Isaac will reach out" as a dead end — instead ask for their phone number to start the booking flow.
+- When a user wants to book, schedule, or speak to Isaac, set should_escalate to true so the system can collect their details. Do NOT say "I'll arrange for Isaac" or handle booking yourself — the system handles the booking flow automatically.
 - Do NOT proactively mention EIS. If asked, say: "Budget 2026 announced the EIS expansion for AI spending. IRAS is publishing detailed guidelines by mid-2026. We will keep you updated once confirmed."
 - Never make up facts about IonicX
 
@@ -638,58 +640,43 @@ export async function POST(req: Request) {
         return new Response('OK', { status: 200 });
       }
 
-      // Handle booking flow — collecting phone number
+      // === BOOKING FLOW STATE MACHINE ===
+      // When in booking flow, ONLY the state handler responds. Never call OpenAI.
       if (state.booking_step === 'awaiting_phone') {
         const phone = containsPhone(messageText);
+        const digitCount = (messageText.match(/\d/g) || []).length;
         const looksLikeSkip = /^(no|skip|nah|don't have|later|not now|i'd rather not)/i.test(messageText.trim());
 
-        if (phone) {
-          state.collected_phone = phone;
+        if (phone || digitCount >= 7) {
+          state.collected_phone = phone || messageText.trim();
           state.booking_step = 'awaiting_email';
           await sendTelegramMessage(chatId, `Got it. And your email address?`);
-          return new Response('OK', { status: 200 });
         } else if (looksLikeSkip) {
-          // User skipped phone, move to email
           state.booking_step = 'awaiting_email';
           await sendTelegramMessage(chatId, `No worries! How about your email address?`);
-          return new Response('OK', { status: 200 });
         } else {
-          // Might be a phone in non-standard format, or user typed something else
-          // Check if the entire message could be a phone (digits with spaces/dashes)
-          const digitCount = (messageText.match(/\d/g) || []).length;
-          if (digitCount >= 7) {
-            state.collected_phone = messageText.trim();
-            state.booking_step = 'awaiting_email';
-            await sendTelegramMessage(chatId, `Got it. And your email address?`);
-            return new Response('OK', { status: 200 });
-          }
-          // Not a phone — maybe they want to skip or said something else
-          // Send alert with whatever we have and exit booking flow
+          // Unrecognised input — complete flow with whatever we have
           await sendCompletedLeadAlert(chatId, getUserHandle(message.from));
-          state.booking_step = null;
           const name = state.name || 'there';
           await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. Feel free to ask me anything in the meantime.`);
-          return new Response('OK', { status: 200 });
         }
+        return new Response('OK', { status: 200 });
       }
 
-      // Handle booking flow — collecting email
       if (state.booking_step === 'awaiting_email') {
         const email = containsEmail(messageText);
-        const looksLikeSkip = /^(no|skip|nah|don't have|later|not now|i'd rather not)/i.test(messageText.trim());
-
         if (email) {
           state.collected_email = email;
         }
-
-        // Whether they gave email, skipped, or typed something else — complete the flow
+        // Complete the flow regardless
         await sendCompletedLeadAlert(chatId, getUserHandle(message.from));
         const name = state.name || 'there';
         await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. In the meantime, feel free to ask me anything.`);
         return new Response('OK', { status: 200 });
       }
+      // === END BOOKING FLOW STATE MACHINE ===
 
-      // Check for unprompted contact details mid-conversation
+      // Check for unprompted contact details mid-conversation (outside booking flow)
       const detectedPhone = containsPhone(messageText);
       const detectedEmail = containsEmail(messageText);
       if (detectedPhone || detectedEmail) {
@@ -705,7 +692,6 @@ export async function POST(req: Request) {
           email: detectedEmail || undefined,
           conversationContext: getConversationSummary(chatId)
         });
-        // Send alert in background, don't block the AI response
         sendLeadAlerts(alertText).catch(err => console.error('Unprompted contact alert failed:', err));
       }
 
@@ -719,7 +705,7 @@ export async function POST(req: Request) {
       if (aiResponse.should_escalate) {
         startBookingFlow(chatId, aiResponse.escalation_reason || 'Wants to speak to Isaac');
         const name = state.name || 'there';
-        await sendTelegramMessage(chatId, `Great, ${name}! Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
+        await sendTelegramMessage(chatId, `Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
       }
     }
 
@@ -734,7 +720,7 @@ export async function GET(req: Request) {
   return new Response(JSON.stringify({
     status: 'Telegram bot webhook is active',
     bot: 'Robin - IonicX AI Sales Assistant',
-    version: '4.0.0',
+    version: '4.1.0',
     features: ['AI conversations', 'conversation memory', 'lead alerts', 'pain-first selling', 'intent-based escalation', 'date awareness', 'name collection', 'booking flow']
   }), {
     status: 200,
