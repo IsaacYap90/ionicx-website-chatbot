@@ -351,7 +351,7 @@ async function summarizeInterest(chatId: string): Promise<string> {
   try {
     const history = getHistory(chatId);
     const recent = history.slice(-10);
-    if (recent.length === 0) return 'See conversation context below.';
+    if (recent.length === 0) return 'No conversation history available.';
     const convo = recent.map(m => `${m.role === 'user' ? 'User' : 'Robin'}: ${m.content}`).join('\n');
     const response = await fetch(OPENAI_URL, {
       method: 'POST',
@@ -359,25 +359,25 @@ async function summarizeInterest(chatId: string): Promise<string> {
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: 'Summarize what this prospect wants in one line. Include their business type, what they\'re interested in, and any key details. Keep it under 20 words.' },
+          { role: 'system', content: 'Summarize this prospect in 2-3 sentences. Include: their business type, their specific pain point, what solutions they showed interest in, and any important details mentioned. Be specific, not generic.' },
           { role: 'user', content: convo }
         ],
-        max_tokens: 60,
+        max_tokens: 150,
         temperature: 0.3
       })
     });
     if (!response.ok) throw new Error(`API error: ${response.status}`);
     const data = await response.json();
-    return data.choices?.[0]?.message?.content?.trim() || 'See conversation context below.';
+    return data.choices?.[0]?.message?.content?.trim() || 'No conversation history available.';
   } catch (error) {
     console.error('Interest summary failed:', error);
-    return 'See conversation context below.';
+    return 'No conversation history available.';
   }
 }
 
 function buildLeadAlertText(params: {
   title: string; prospectName: string; userHandle: string; chatId: string;
-  timestamp: string; reason: string; phone?: string; email?: string; conversationContext?: string;
+  timestamp: string; reason: string; phone?: string; email?: string;
   interest?: string;
 }): string {
   let text = `🚨 ${params.title}\n\nName: ${params.prospectName}\n`;
@@ -386,14 +386,13 @@ function buildLeadAlertText(params: {
   text += `Phone: ${params.phone || 'Not provided'}\n`;
   text += `Email: ${params.email || 'Not provided'}\n`;
   text += `Reason: ${params.reason}\nTime (SGT): ${params.timestamp}\n`;
-  if (params.conversationContext) text += `Context: ${params.conversationContext}\n`;
   if (params.userHandle && params.userHandle !== 'No username') {
     const username = params.userHandle.replace(/^@/, '');
     text += `\nReply: https://t.me/${username}`;
   } else if (params.phone) {
     text += `\nReply: Call ${params.phone}`;
   } else {
-    text += `\nReply: Check conversation context`;
+    text += `\nReply: Check chat ID above`;
   }
   return text;
 }
@@ -430,14 +429,16 @@ function startBookingFlow(chatId: string, reason: string) {
 async function sendCompletedLeadAlert(chatId: string, userHandle: string, telegramName?: string) {
   const state = getState(chatId);
   const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
+  const storedName = getStoredName(chatId);
+  const prospectName = storedName !== 'Unknown' ? storedName : (telegramName || 'Unknown');
+  console.log(`[Lead Alert] chatId=${chatId} storedName="${storedName}" telegramName="${telegramName}" using="${prospectName}"`);
   const interest = await summarizeInterest(chatId);
   const alertText = buildLeadAlertText({
     title: 'New Lead from Telegram Bot',
-    prospectName: getStoredName(chatId, telegramName),
+    prospectName,
     userHandle, chatId, timestamp: sgtTimestamp,
     reason: state.booking_reason || 'Wants to speak to Isaac',
     phone: state.collected_phone, email: state.collected_email,
-    conversationContext: getConversationSummary(chatId),
     interest
   });
   await sendLeadAlerts(alertText);
@@ -639,13 +640,13 @@ export async function POST(req: Request) {
       const detectedEmail = containsEmail(messageText);
       if (detectedPhone || detectedEmail) {
         const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
+        const unpromptedName = getStoredName(chatId);
         const alertText = buildLeadAlertText({
           title: 'Lead Alert: Contact Details Shared',
-          prospectName: getStoredName(chatId, getTelegramName(message.from)),
+          prospectName: unpromptedName !== 'Unknown' ? unpromptedName : getTelegramName(message.from) || 'Unknown',
           userHandle: getUserHandle(message.from), chatId, timestamp: sgtTimestamp,
           reason: 'User shared contact details unprompted',
-          phone: detectedPhone || undefined, email: detectedEmail || undefined,
-          conversationContext: getConversationSummary(chatId)
+          phone: detectedPhone || undefined, email: detectedEmail || undefined
         });
         sendLeadAlerts(alertText).catch(err => console.error('Unprompted contact alert failed:', err));
       }
