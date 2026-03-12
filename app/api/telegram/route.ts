@@ -358,8 +358,8 @@ export async function POST(req: Request) {
       
       console.log(`Telegram callback from ${chatId}: ${data}`);
       
-      // Answer the callback query
-      await answerCallbackQuery(query.id);
+      // Answer the callback query (fire and forget)
+      answerCallbackQuery(query.id).catch(err => console.error('Failed to answer callback:', err));
       
       // Handle "Talk to Isaac" button - trigger alerts immediately
       if (data === 'btn_human') {
