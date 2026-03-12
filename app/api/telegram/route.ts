@@ -112,12 +112,18 @@ STRICT RESPONSE FORMAT RULES:
 - Maximum 3 numbered points per response. No paragraphs. No exceptions.
 - Each numbered point should be one sentence.
 - Use "1. 2. 3." format, NOT dashes or bullet points.
-- End with a question or CTA.
+- IMPORTANT: Put each numbered point on its own line with a blank line between them for readability on Telegram.
+- End with a question or CTA on a new line after the points.
 - Example format:
-  1. [Specific point 1]
-  2. [Specific point 2]
-  3. [Specific point 3]
-  Would you like to explore further?
+
+1. We can build a 24/7 AI chatbot to handle your customer enquiries automatically.
+
+2. A professional website designed to convert visitors into paying customers.
+
+3. Lead capture system so you never miss a potential client again.
+
+Would you like to explore any of these further?
+
 - If the user replies with just a number (e.g. "2"), map it to the corresponding numbered point from your last response and continue the conversation about that specific topic.
 - Respond in the same language the user writes in (English or Chinese)
 - Ask one question at a time. Do not stack multiple questions.
@@ -608,12 +614,17 @@ export async function POST(req: Request) {
       }
 
       // Handle awaiting_name state
-      if (state.awaiting_name) {
-        // Extract name — take the first word or two as the name, skip if it looks like a question
-        const trimmed = messageText.trim();
-        const looksLikeQuestion = /^(what|how|can|do|is|are|why|when|where|which|tell|show|help)/i.test(trimmed);
+      // Check both the explicit flag AND empty history (handles serverless cold starts
+      // where in-memory chatStates may be lost between /start and the name reply)
+      const history = getHistory(chatId);
+      const isAwaitingName = state.awaiting_name || (!state.name && history.length === 0 && !state.booking_step);
 
-        if (looksLikeQuestion || trimmed.length > 50) {
+      if (isAwaitingName) {
+        const trimmed = messageText.trim();
+        const looksLikeQuestion = /^(what|how|can|do|is|are|why|when|where|which|tell|show|help|i need|i want|i'm looking)/i.test(trimmed);
+        const looksLikeCommand = trimmed.startsWith('/');
+
+        if (looksLikeQuestion || looksLikeCommand || trimmed.length > 50) {
           // User skipped name and asked a question — proceed without forcing
           state.awaiting_name = false;
           console.log(`User ${chatId} skipped name, proceeding with question`);
@@ -623,14 +634,14 @@ export async function POST(req: Request) {
 
           if (aiResponse.should_escalate) {
             startBookingFlow(chatId, aiResponse.escalation_reason || 'Wants to speak to Isaac');
-            const name = state.name || 'there';
-            await sendTelegramMessage(chatId, `Great, ${name}! Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
+            const bkName = state.name || 'there';
+            await sendTelegramMessage(chatId, `Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
           }
           return new Response('OK', { status: 200 });
         }
 
-        // Store the name
-        const name = trimmed.split(/\s+/).slice(0, 3).join(' '); // Cap at 3 words
+        // Store the name (cap at 3 words)
+        const name = trimmed.split(/\s+/).slice(0, 3).join(' ');
         state.name = name;
         state.awaiting_name = false;
         console.log(`User ${chatId} identified as: ${name}`);
