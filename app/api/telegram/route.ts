@@ -361,7 +361,14 @@ function buildLeadAlertText(params: {
   text += `Email: ${params.email || 'Not provided'}\n`;
   text += `Reason: ${params.reason}\nTime (SGT): ${params.timestamp}\n`;
   if (params.conversationContext) text += `Context: ${params.conversationContext}\n`;
-  text += `\nReply: https://t.me/IonicXAI_Assistant`;
+  if (params.userHandle && params.userHandle !== 'No username') {
+    const username = params.userHandle.replace(/^@/, '');
+    text += `\nReply: https://t.me/${username}`;
+  } else if (params.phone) {
+    text += `\nReply: Call ${params.phone}`;
+  } else {
+    text += `\nReply: Check conversation context`;
+  }
   return text;
 }
 
