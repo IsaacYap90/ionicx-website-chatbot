@@ -381,8 +381,6 @@ function buildLeadAlertText(params: {
   interest?: string;
 }): string {
   let text = `🚨 ${params.title}\n\nName: ${params.prospectName}\n`;
-  if (params.interest) text += `🎯 Interest: ${params.interest}\n`;
-  text += `Username: ${params.userHandle}\nChat ID: ${params.chatId}\n`;
   text += `Phone: ${params.phone || 'Not provided'}\n`;
   text += `Email: ${params.email || 'Not provided'}\n`;
   text += `Reason: ${params.reason}\nTime (SGT): ${params.timestamp}\n`;
@@ -392,8 +390,9 @@ function buildLeadAlertText(params: {
   } else if (params.phone) {
     text += `\nReply: Call ${params.phone}`;
   } else {
-    text += `\nReply: Check chat ID above`;
+    text += `\nReply: No contact method available`;
   }
+  if (params.interest) text += `\n\n🎯 Interest: ${params.interest}`;
   return text;
 }
 
