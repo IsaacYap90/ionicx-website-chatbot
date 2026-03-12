@@ -315,6 +315,47 @@ export async function POST(req: Request) {
       // Answer the callback query
       await answerCallbackQuery(query.id);
       
+      // Handle "Talk to Isaac" button - trigger alerts immediately
+      if (data === 'btn_human') {
+        const responseText = menuResponses['btn_human'];
+        await sendInlineKeyboard(chatId, responseText, mainMenuKeyboard);
+        
+        // Get user info for the alert
+        const user = update.callback_query.from;
+        const userName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
+        const userHandle = user.username ? `@${user.username}` : 'No username';
+        
+        // Send Telegram alert to Isaac
+        const alertText = `🚨 *Lead Alert: Talk to Isaac*
+
+*User:* ${userName}
+*Username:* ${userHandle}
+*Chat ID:* ${chatId}
+*Action:* Clicked "Talk to Isaac" button
+
+Reply: https://t.me/IonicXAI_Assistant`;
+        
+        await sendTelegramMessage(ISAAC_CHAT_ID, alertText);
+        
+        // Send WhatsApp alert to Isaac
+        try {
+          const whatsAppAlert = `🚨 Lead Alert: Talk to Isaac
+
+User: ${userName}
+Username: ${userHandle}
+Chat ID: ${chatId}
+Action: Clicked "Talk to Isaac" button
+
+Reply on Telegram: https://t.me/IonicXAI_Assistant`;
+          await sendWhatsAppMessage(ISAAC_WHATSAPP, whatsAppAlert);
+        } catch (error) {
+          console.error('WhatsApp alert failed:', error);
+        }
+        
+        console.log(`Alerts sent to Isaac for chat ${chatId} (Talk to Isaac button)`);
+        return new Response('OK', { status: 200 });
+      }
+      
       // Send response based on button clicked
       const responseText = menuResponses[data] || menuResponses['btn_menu'];
       await sendInlineKeyboard(chatId, responseText, mainMenuKeyboard);
