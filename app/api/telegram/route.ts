@@ -7,7 +7,15 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const ISAAC_CHAT_ID = "1729085064"; // For human escalation alerts
+const ISAAC_CHAT_ID = "1729085064"; // For Telegram escalation alerts
+const ISAAC_WHATSAPP = "6580268821"; // For WhatsApp escalation alerts
+
+// WhatsApp Cloud API config (for sending alerts to Isaac)
+const WHATSAPP_API = () => `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+const WHATSAPP_HEADERS = () => ({
+  'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+  'Content-Type': 'application/json'
+});
 
 // Load knowledge base
 const knowledgeBase = loadKnowledgeBase();
@@ -116,6 +124,30 @@ async function answerCallbackQuery(queryId: string) {
     });
   } catch (error) {
     console.error('Error answering callback:', error);
+  }
+}
+
+// Send WhatsApp message (for alerting Isaac)
+async function sendWhatsAppMessage(to: string, text: string) {
+  try {
+    const response = await fetch(WHATSAPP_API(), {
+      method: 'POST',
+      headers: WHATSAPP_HEADERS(),
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to,
+        type: 'text',
+        text: { body: text }
+      })
+    });
+    
+    const data = await response.json();
+    console.log('WhatsApp alert sent:', data);
+    return data;
+  } catch (error) {
+    console.error('Error sending WhatsApp alert:', error);
+    throw error;
   }
 }
 
@@ -300,11 +332,11 @@ export async function POST(req: Request) {
       
       // Handle /start and /menu commands
       if (messageText === '/start' || messageText === '/menu') {
-        const welcomeText = `👋 Welcome to *IonicX AI*!
+        const welcomeText = `👋 Hi, I'm Robin — IonicX AI's assistant.
 
-I'm your AI assistant, here to help you explore how we can automate your business with AI-powered websites and chatbots.
+I'm here to help you explore how AI can automate your business. Whether it's a smart chatbot, a professional website, or full workflow automation — let's see what's possible.
 
-What would you like to know?`;
+What brings you here today?`;
         await sendInlineKeyboard(chatId, welcomeText, mainMenuKeyboard);
         return new Response('OK', { status: 200 });
       }
@@ -315,7 +347,7 @@ What would you like to know?`;
       // Send AI response with menu keyboard
       await sendInlineKeyboard(chatId, aiResponse.response, mainMenuKeyboard);
       
-      // Smart handoff: if escalation needed, alert Isaac
+      // Smart handoff: if escalation needed, alert Isaac via Telegram and WhatsApp
       if (aiResponse.should_escalate) {
         const alertText = `🚨 *Lead Alert from Telegram Bot*
 
@@ -323,10 +355,26 @@ What would you like to know?`;
 *Message:* ${messageText}
 *Reason:* ${aiResponse.escalation_reason}
 
-The user has been informed that Isaac will follow up.`;
+Reply to user: https://t.me/IonicXAI_Assistant`;
         
+        // Send Telegram alert
         await sendTelegramMessage(ISAAC_CHAT_ID, alertText);
-        console.log(`Alert sent to Isaac for chat ${chatId}`);
+        
+        // Send WhatsApp alert
+        try {
+          const whatsAppAlert = `🚨 Lead Alert from Telegram Bot
+
+Chat ID: ${chatId}
+Message: "${messageText}"
+Reason: ${aiResponse.escalation_reason}
+
+Reply on Telegram: https://t.me/IonicXAI_Assistant`;
+          await sendWhatsAppMessage(ISAAC_WHATSAPP, whatsAppAlert);
+        } catch (error) {
+          console.error('WhatsApp alert failed:', error);
+        }
+        
+        console.log(`Alerts sent to Isaac for chat ${chatId}`);
       }
     }
     
