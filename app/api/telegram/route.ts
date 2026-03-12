@@ -492,7 +492,7 @@ export async function POST(req: Request) {
 
       // "Book a Call" or "Talk to Isaac" → booking flow
       if (data === 'btn_book') {
-        const resolved = getStoredName(chatId, getTelegramName(query.from));
+        const resolved = getStoredName(chatId);
         const name = resolved !== 'Unknown' ? resolved : 'there';
         startBookingFlow(chatId, 'Clicked "Book a Call"');
         await sendTelegramMessage(chatId, `Great, ${name}! What's your phone number?`);
@@ -501,7 +501,7 @@ export async function POST(req: Request) {
 
       // "Ask More" → prompt for next question
       if (data === 'btn_ask') {
-        const resolved = getStoredName(chatId, getTelegramName(query.from));
+        const resolved = getStoredName(chatId);
         const name = resolved !== 'Unknown' ? resolved : 'there';
         await sendTelegramMessage(chatId, `Sure, ${name}! What else would you like to know?`);
         return new Response('OK', { status: 200 });
@@ -601,7 +601,7 @@ export async function POST(req: Request) {
         const email = containsEmail(messageText);
         if (email) state.collected_email = email;
         await sendCompletedLeadAlert(chatId, getUserHandle(message.from), getTelegramName(message.from));
-        const resolved = getStoredName(chatId, getTelegramName(message.from));
+        const resolved = getStoredName(chatId);
         const name = resolved !== 'Unknown' ? resolved : 'there';
         await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. In the meantime, feel free to ask me anything.`);
         return new Response('OK', { status: 200 });
