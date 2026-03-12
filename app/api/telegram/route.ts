@@ -363,8 +363,15 @@ export async function POST(req: Request) {
       
       // Handle "Talk to Isaac" button - trigger alerts immediately
       if (data === 'btn_human') {
-        const responseText = menuResponses['btn_human'];
-        await sendInlineKeyboard(chatId, responseText, mainMenuKeyboard);
+        console.log('Processing btn_human click...');
+        
+        try {
+          const responseText = menuResponses['btn_human'];
+          await sendInlineKeyboard(chatId, responseText, mainMenuKeyboard);
+          console.log('Inline keyboard sent to user');
+        } catch (error) {
+          console.error('Failed to send inline keyboard:', error);
+        }
         
         // Get user info for the alert
         const user = update.callback_query.from;
@@ -388,7 +395,12 @@ Reply: https://t.me/IonicXAI_Assistant`;
         } catch (error) {
           console.error('Leads Bot alert failed:', error);
           // Fallback to main bot
-          await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
+          try {
+            await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
+            console.log('Fallback alert sent via main bot');
+          } catch (fallbackError) {
+            console.error('Fallback alert also failed:', fallbackError);
+          }
         }
         
         // Send WhatsApp alert to Isaac (skip if WhatsApp API not configured)
