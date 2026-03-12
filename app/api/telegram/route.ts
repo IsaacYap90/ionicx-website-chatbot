@@ -226,9 +226,6 @@ const mainMenuKeyboard = [
   ],
   [
     { text: '🎯 Our Work', callback_data: 'menu_demos' },
-    { text: '📞 Contact', callback_data: 'menu_contact' }
-  ],
-  [
     { text: '👤 Talk to Isaac', callback_data: 'btn_human' }
   ]
 ];
@@ -246,7 +243,9 @@ We help businesses:
 • AI Chatbots (WhatsApp/Web)
 • Professional Business Websites
 • Lead Generation Systems
-• Workflow Automation`,
+• Workflow Automation
+
+_Every business is different. We also build custom AI solutions tailored to your specific workflow. Tap "Talk to Isaac" to discuss._`,
 
   menu_pricing: `💰 *IonicX AI Pricing:*
 
@@ -260,7 +259,9 @@ We help businesses:
 • Custom web app + full automation
 
 *Enterprise — S$15,888 + S$2,388/year*
-• Bespoke AI solutions`,
+• Bespoke AI solutions
+
+_Need something outside these tiers? We do custom builds too — tap "Talk to Isaac" to chat._`,
 
   menu_demos: `🎯 *See Our Work:*
 
