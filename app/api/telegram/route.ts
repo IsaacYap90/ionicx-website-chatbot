@@ -10,6 +10,10 @@ const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const ISAAC_CHAT_ID = 1729085064; // For Telegram escalation alerts (must be number)
 const ISAAC_WHATSAPP = "6580268821"; // For WhatsApp escalation alerts
 
+// IonicX Leads Bot for alerts
+const LEADS_BOT_TOKEN = "LEADS_BOT_TOKEN_REDACTED";
+const LEADS_BOT_API = `https://api.telegram.org/bot${LEADS_BOT_TOKEN}`;
+
 // WhatsApp Cloud API config (for sending alerts to Isaac)
 const WHATSAPP_API = () => `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
 const WHATSAPP_HEADERS = () => ({
@@ -147,6 +151,28 @@ async function sendWhatsAppMessage(to: string, text: string) {
     return data;
   } catch (error) {
     console.error('Error sending WhatsApp alert:', error);
+    throw error;
+  }
+}
+
+// Send alert via IonicX Leads Bot
+async function sendLeadsBotAlert(chatId: string | number, text: string) {
+  try {
+    const response = await fetch(`${LEADS_BOT_API}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text,
+        parse_mode: 'Markdown'
+      })
+    });
+    
+    const data = await response.json();
+    console.log('Leads Bot alert sent:', data.ok);
+    return data;
+  } catch (error) {
+    console.error('Error sending Leads Bot alert:', error);
     throw error;
   }
 }
@@ -326,7 +352,7 @@ export async function POST(req: Request) {
         const userName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
         const userHandle = user.username ? `@${user.username}` : 'No username';
         
-        // Send Telegram alert to Isaac
+        // Send alert via Leads Bot to Isaac
         const alertText = `🚨 *Lead Alert: Talk to Isaac*
 
 *User:* ${userName}
@@ -336,9 +362,15 @@ export async function POST(req: Request) {
 
 Reply: https://t.me/IonicXAI_Assistant`;
         
-        console.log('Sending Telegram alert to Isaac...');
-        await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
-        console.log('Telegram alert sent successfully');
+        console.log('Sending Leads Bot alert to Isaac...');
+        try {
+          await sendLeadsBotAlert(ISAAC_CHAT_ID, alertText);
+          console.log('Leads Bot alert sent successfully');
+        } catch (error) {
+          console.error('Leads Bot alert failed:', error);
+          // Fallback to main bot
+          await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
+        }
         
         // Send WhatsApp alert to Isaac (skip if WhatsApp API not configured)
         if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) {
@@ -396,7 +428,7 @@ What brings you here today?`;
       // Send AI response with menu keyboard
       await sendInlineKeyboard(chatId, aiResponse.response, mainMenuKeyboard);
       
-      // Smart handoff: if escalation needed, alert Isaac via Telegram and WhatsApp
+      // Smart handoff: if escalation needed, alert Isaac via Leads Bot and WhatsApp
       if (aiResponse.should_escalate) {
         const alertText = `🚨 *Lead Alert from Telegram Bot*
 
@@ -406,21 +438,29 @@ What brings you here today?`;
 
 Reply to user: https://t.me/IonicXAI_Assistant`;
         
-        // Send Telegram alert
-        await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
+        // Send Leads Bot alert
+        try {
+          await sendLeadsBotAlert(ISAAC_CHAT_ID, alertText);
+          console.log('Leads Bot alert sent');
+        } catch (error) {
+          console.error('Leads Bot alert failed, falling back to main bot:', error);
+          await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
+        }
         
         // Send WhatsApp alert
-        try {
-          const whatsAppAlert = `🚨 Lead Alert from Telegram Bot
+        if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) {
+          try {
+            const whatsAppAlert = `🚨 Lead Alert from Telegram Bot
 
 Chat ID: ${chatId}
 Message: "${messageText}"
 Reason: ${aiResponse.escalation_reason}
 
 Reply on Telegram: https://t.me/IonicXAI_Assistant`;
-          await sendWhatsAppMessage(ISAAC_WHATSAPP, whatsAppAlert);
-        } catch (error) {
-          console.error('WhatsApp alert failed:', error);
+            await sendWhatsAppMessage(ISAAC_WHATSAPP, whatsAppAlert);
+          } catch (error) {
+            console.error('WhatsApp alert failed:', error);
+          }
         }
         
         console.log(`Alerts sent to Isaac for chat ${chatId}`);
