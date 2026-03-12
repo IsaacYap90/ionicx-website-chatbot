@@ -55,28 +55,29 @@ function addToHistory(chatId: string, role: string, content: string) {
   if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
 }
 
-// Store name in conversation history so it survives serverless cold starts
-const NAME_MARKER = '[NAME_COLLECTED]:';
+// Name is stored as a system message in conversation history: "The user's name is [Name]."
+// This travels with the OpenAI context on warm instances and provides the AI with the name.
+const NAME_PREFIX = "The user's name is ";
 
 function storeNameInHistory(chatId: string, name: string) {
   const history = getHistory(chatId);
-  // Add as first entry so it's always available and never trimmed by recency
-  history.unshift({ role: 'system', content: `${NAME_MARKER} ${name}` });
+  // Remove any existing name message to avoid duplicates
+  const idx = history.findIndex(m => m.role === 'system' && m.content.startsWith(NAME_PREFIX));
+  if (idx !== -1) history.splice(idx, 1);
+  // Insert at the start so it's always present and never trimmed by MAX_HISTORY
+  history.unshift({ role: 'system', content: `${NAME_PREFIX}${name}.` });
 }
 
-// Extract name from conversation history (survives cold starts), then chatStates, then Telegram profile
+// Extract name: conversation history system message → chatStates → Telegram profile → "Unknown"
 function getStoredName(chatId: string, telegramName?: string): string {
-  // 1. Check conversation history for the name marker
   const history = getHistory(chatId);
   for (const msg of history) {
-    if (msg.content.startsWith(NAME_MARKER)) {
-      return msg.content.slice(NAME_MARKER.length).trim();
+    if (msg.role === 'system' && msg.content.startsWith(NAME_PREFIX)) {
+      return msg.content.slice(NAME_PREFIX.length).replace(/\.$/, '').trim();
     }
   }
-  // 2. Check chatStates (works on warm instances)
   const state = getState(chatId);
   if (state.name) return state.name;
-  // 3. Telegram profile name
   if (telegramName) return telegramName;
   return 'Unknown';
 }
@@ -393,14 +394,12 @@ function containsEmail(text: string): string | null {
 
 async function getAIResponse(chatId: string, message: string): Promise<string> {
   try {
-    const state = getState(chatId);
     const history = getHistory(chatId);
     const resolvedName = getStoredName(chatId);
-    // Filter out name marker from messages sent to OpenAI
-    const cleanHistory = history.filter(m => !m.content.startsWith(NAME_MARKER));
+    // Name system message in history is useful context for OpenAI — include it as-is
     const messages = [
-      { role: "system", content: getSystemPrompt(resolvedName !== 'Unknown' ? resolvedName : state.name) },
-      ...cleanHistory,
+      { role: "system", content: getSystemPrompt(resolvedName !== 'Unknown' ? resolvedName : undefined) },
+      ...history,
       { role: "user", content: message }
     ];
 
@@ -510,8 +509,8 @@ export async function POST(req: Request) {
 
       // /menu → show main menu
       if (messageText === '/menu') {
-        const name = state.name;
-        const greeting = name ? `Hey ${name}! Here's what I can help with:` : `Here's what I can help with:`;
+        const resolved = getStoredName(chatId);
+        const greeting = resolved !== 'Unknown' ? `Hey ${resolved}! Here's what I can help with:` : `Here's what I can help with:`;
         await sendInlineKeyboard(chatId, greeting, mainMenuKeyboard);
         return new Response('OK', { status: 200 });
       }
@@ -550,22 +549,22 @@ export async function POST(req: Request) {
       // === BOOKING FLOW STATE MACHINE ===
       // Sole responder during phone/email collection — never calls OpenAI
       if (state.booking_step === 'awaiting_phone') {
-        const phone = containsPhone(messageText);
-        const digitCount = (messageText.match(/\d/g) || []).length;
-        const looksLikeSkip = /^(no|skip|nah|don't have|later|not now|i'd rather not)/i.test(messageText.trim());
+        const trimmed = messageText.trim();
+        const looksLikeSkip = /^(no|skip|nah|don't have|later|not now|i'd rather not)/i.test(trimmed);
+        // Validate phone: strip non-digit chars (except leading +), check 7-15 digits
+        const digitsOnly = trimmed.replace(/[\s\-()]/g, '');
+        const isValidPhone = /^\+?\d{7,15}$/.test(digitsOnly);
 
-        if (phone || digitCount >= 7) {
-          state.collected_phone = phone || messageText.trim();
+        if (isValidPhone) {
+          state.collected_phone = trimmed;
           state.booking_step = 'awaiting_email';
           await sendTelegramMessage(chatId, `Got it. And your email address?`);
         } else if (looksLikeSkip) {
           state.booking_step = 'awaiting_email';
           await sendTelegramMessage(chatId, `No worries! How about your email address?`);
         } else {
-          // Unrecognised — complete with whatever we have
-          await sendCompletedLeadAlert(chatId, getUserHandle(message.from), getTelegramName(message.from));
-          const name = state.name || 'there';
-          await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. Feel free to ask me anything in the meantime.`);
+          // Not a valid phone — ask again
+          await sendTelegramMessage(chatId, `That doesn't look like a phone number. Could you try again? (e.g. +65 9123 4567)`);
         }
         return new Response('OK', { status: 200 });
       }
@@ -574,7 +573,8 @@ export async function POST(req: Request) {
         const email = containsEmail(messageText);
         if (email) state.collected_email = email;
         await sendCompletedLeadAlert(chatId, getUserHandle(message.from), getTelegramName(message.from));
-        const name = state.name || 'there';
+        const resolved = getStoredName(chatId, getTelegramName(message.from));
+        const name = resolved !== 'Unknown' ? resolved : 'there';
         await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. In the meantime, feel free to ask me anything.`);
         return new Response('OK', { status: 200 });
       }
