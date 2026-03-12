@@ -321,11 +321,42 @@ async function sendLeadsBotAlert(chatId: string | number, text: string) {
   }
 }
 
+async function summarizeInterest(chatId: string): Promise<string> {
+  try {
+    const history = getHistory(chatId);
+    const recent = history.slice(-10);
+    if (recent.length === 0) return 'See conversation context below.';
+    const convo = recent.map(m => `${m.role === 'user' ? 'User' : 'Robin'}: ${m.content}`).join('\n');
+    const response = await fetch(OPENAI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'Summarize what this prospect wants in one line. Include their business type, what they\'re interested in, and any key details. Keep it under 20 words.' },
+          { role: 'user', content: convo }
+        ],
+        max_tokens: 60,
+        temperature: 0.3
+      })
+    });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content?.trim() || 'See conversation context below.';
+  } catch (error) {
+    console.error('Interest summary failed:', error);
+    return 'See conversation context below.';
+  }
+}
+
 function buildLeadAlertText(params: {
   title: string; prospectName: string; userHandle: string; chatId: string;
   timestamp: string; reason: string; phone?: string; email?: string; conversationContext?: string;
+  interest?: string;
 }): string {
-  let text = `🚨 ${params.title}\n\nName: ${params.prospectName}\nUsername: ${params.userHandle}\nChat ID: ${params.chatId}\n`;
+  let text = `🚨 ${params.title}\n\nName: ${params.prospectName}\n`;
+  if (params.interest) text += `🎯 Interest: ${params.interest}\n`;
+  text += `Username: ${params.userHandle}\nChat ID: ${params.chatId}\n`;
   text += `Phone: ${params.phone || 'Not provided'}\n`;
   text += `Email: ${params.email || 'Not provided'}\n`;
   text += `Reason: ${params.reason}\nTime (SGT): ${params.timestamp}\n`;
@@ -366,13 +397,15 @@ function startBookingFlow(chatId: string, reason: string) {
 async function sendCompletedLeadAlert(chatId: string, userHandle: string, telegramName?: string) {
   const state = getState(chatId);
   const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
+  const interest = await summarizeInterest(chatId);
   const alertText = buildLeadAlertText({
     title: 'New Lead from Telegram Bot',
     prospectName: getStoredName(chatId, telegramName),
     userHandle, chatId, timestamp: sgtTimestamp,
     reason: state.booking_reason || 'Wants to speak to Isaac',
     phone: state.collected_phone, email: state.collected_email,
-    conversationContext: getConversationSummary(chatId)
+    conversationContext: getConversationSummary(chatId),
+    interest
   });
   await sendLeadAlerts(alertText);
   console.log(`Lead alert sent for chat ${chatId}`);
