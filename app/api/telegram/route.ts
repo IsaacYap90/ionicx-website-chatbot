@@ -157,19 +157,38 @@ async function sendWhatsAppMessage(to: string, text: string) {
 
 // Send alert via IonicX Leads Bot
 async function sendLeadsBotAlert(chatId: string | number, text: string) {
+  const url = `${LEADS_BOT_API}/sendMessage`;
+  const payload = {
+    chat_id: chatId,
+    text: text,
+    parse_mode: 'Markdown'
+  };
+  
+  console.log('Sending Leads Bot alert to:', url);
+  console.log('Payload:', JSON.stringify(payload));
+  
   try {
-    const response = await fetch(`${LEADS_BOT_API}/sendMessage`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: 'Markdown'
-      })
+      body: JSON.stringify(payload)
     });
     
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Leads Bot HTTP error:', response.status, errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+    
     const data = await response.json();
-    console.log('Leads Bot alert sent:', data.ok);
+    console.log('Leads Bot response:', JSON.stringify(data));
+    
+    if (!data.ok) {
+      console.error('Leads Bot API error:', data.description);
+      throw new Error(data.description);
+    }
+    
+    console.log('Leads Bot alert sent successfully');
     return data;
   } catch (error) {
     console.error('Error sending Leads Bot alert:', error);
