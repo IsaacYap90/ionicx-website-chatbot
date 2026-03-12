@@ -68,7 +68,7 @@ Want a custom demo for your business? Let's talk.`,
   contact: `📞 *Contact IonicX AI*
 
 *Isaac Yap*
-📧 isaac@isaacyap.ai
+📧 isaac@ionicx.ai
 🌐 https://ionicx.ai
 📱 WhatsApp: +65 8026 8821
 
@@ -79,7 +79,7 @@ Ready to automate your business? Send me a message!`,
 
   human: `Sure! Here's how to reach Isaac directly:
 
-📧 isaac@isaacyap.ai
+📧 isaac@ionicx.ai
 📱 WhatsApp: +65 8026 8821
 
 He typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).`,

@@ -244,7 +244,7 @@ async function getAIResponse(chatId: string, message: string): Promise<{ respons
   // Handle human escalation locally
   if (isHumanEscalation(message)) {
     return {
-      response: "Sure! Here's how to reach Isaac directly:\n\n📧 isaac@isaacyap.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
+      response: "Sure! Here's how to reach Isaac directly:\n\n📧 isaac@ionicx.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
       should_escalate: true,
       escalation_reason: "User requested human agent"
     };
@@ -312,7 +312,7 @@ async function getAIResponse(chatId: string, message: string): Promise<{ respons
   } catch (error) {
     console.error("AI response error:", error);
     return {
-      response: "Sorry, I'm having trouble right now. Please try again or contact Isaac directly at isaac@isaacyap.ai",
+      response: "Sorry, I'm having trouble right now. Please try again or contact Isaac directly at isaac@ionicx.ai",
       should_escalate: true,
       escalation_reason: "AI service error"
     };
@@ -377,7 +377,7 @@ Want a custom demo for your business? Let's talk!`,
   menu_contact: `📞 *Contact IonicX AI*
 
 *Isaac Yap*
-📧 isaac@isaacyap.ai
+📧 isaac@ionicx.ai
 🌐 ionicx.ai
 📱 WhatsApp: +65 8026 8821
 
@@ -386,7 +386,7 @@ Mon-Fri: 9am - 6pm SGT`,
 
   btn_human: `Sure! Here's how to reach Isaac directly:
 
-📧 isaac@isaacyap.ai
+📧 isaac@ionicx.ai
 📱 WhatsApp: +65 8026 8821
 
 He typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).`,

@@ -10,7 +10,7 @@ const knowledgeBase = loadKnowledgeBase();
 const HUMAN_ESCALATION_RESPONSE = {
   thinking: "User wants to speak with a human agent",
   response:
-    "Sure! Here's how to reach Isaac directly:\n\n📧 isaac@isaacyap.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
+    "Sure! Here's how to reach Isaac directly:\n\n📧 isaac@ionicx.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
   user_mood: "neutral",
   suggested_questions: [
     "What services does IonicX offer?",
@@ -62,7 +62,7 @@ Your responsibilities:
 - Explain pricing tiers clearly: Starter S$2,888 setup + S$888/yr / Growth S$5,888 setup + S$1,288/yr / Scale S$8,888 setup + S$1,588/yr / Enterprise S$15,888 setup + S$2,388/yr
 - Encourage visitors to book a free consultation
 - Be warm, helpful, and consultative — you're a trusted advisor, not a pushy salesman
-- If you don't know something specific, offer to connect them with Isaac at isaac@isaacyap.ai or WhatsApp +65 8026 8821
+- If you don't know something specific, offer to connect them with Isaac at isaac@ionicx.ai or WhatsApp +65 8026 8821
 
 Important guidelines:
 - Keep responses concise but informative
@@ -72,7 +72,7 @@ Important guidelines:
 - Do NOT proactively mention EIS, Enterprise Innovation Scheme, or any tax deduction schemes. If a user asks about EIS or tax deductions, respond ONLY with: "Budget 2026 announced the EIS expansion for AI spending. IRAS is publishing detailed guidelines by mid-2026. We will keep you updated once confirmed." Do NOT elaborate further.
 - Do NOT use <think> tags or show internal reasoning. Just respond directly.
 - When you receive an unrecognized or general message, give a helpful conversational response about IonicX services. Do NOT just repeat a menu. Only show the full menu of options if the user explicitly types "menu" or "help".
-- If the user asks to speak to a human, agent, or real person, direct them to Isaac at isaac@isaacyap.ai or WhatsApp +65 8026 8821.
+- If the user asks to speak to a human, agent, or real person, direct them to Isaac at isaac@ionicx.ai or WhatsApp +65 8026 8821.
 
 Format your entire response as a valid JSON object (no markdown wrapping, no code fences, just raw JSON):
 {

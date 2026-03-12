@@ -201,7 +201,7 @@ export default async function handler(req, res) {
       if (isHumanEscalation(messageText)) {
         await sendWhatsAppMessage(
           from,
-          "Sure! Let me connect you with Isaac.\n\n📧 isaac@isaacyap.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
+          "Sure! Let me connect you with Isaac.\n\n📧 isaac@ionicx.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
           phoneNumberId
         );
 
@@ -233,7 +233,7 @@ export default async function handler(req, res) {
       if (aiResult.wants_human) {
         await sendWhatsAppMessage(
           from,
-          "Sure! Here's how to reach Isaac directly:\n\n📧 isaac@isaacyap.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
+          "Sure! Here's how to reach Isaac directly:\n\n📧 isaac@ionicx.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
           phoneNumberId
         );
 
