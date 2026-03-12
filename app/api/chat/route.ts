@@ -272,10 +272,30 @@ export async function POST(req: Request) {
 
   const state = getState(sessionId);
 
-  // ── First message: ask for name ──
-  if (!state.greeted) {
+  // ── Rebuild state from messages array (survives cold starts) ──
+  // Extract name from conversation history if previously collected
+  const NAME_MARKER = "The user's name is ";
+  if (!state.collected_name) {
+    for (const msg of messages) {
+      if (msg.role === 'assistant' && typeof msg.content === 'string') {
+        // Check for "Nice to meet you, X!" pattern
+        const niceMatch = msg.content.match(/Nice to meet you, (.+?)!/);
+        if (niceMatch) {
+          state.collected_name = niceMatch[1].trim();
+          state.greeted = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Detect conversation phase from message count
+  const userMessages = messages.filter((m: any) => m.role === 'user');
+  const assistantMessages = messages.filter((m: any) => m.role === 'assistant');
+
+  // ── First message ever: ask for name ──
+  if (userMessages.length === 1 && assistantMessages.length === 0) {
     state.greeted = true;
-    state.awaiting_initial_name = true;
     addToHistory(sessionId, "user", latestMessage);
     addToHistory(sessionId, "assistant", "Hi, I'm Robin — IonicX AI's assistant. Before we get started, what's your name?");
     return makeResponse(
@@ -284,19 +304,19 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── Awaiting initial name ──
-  if (state.awaiting_initial_name) {
+  // ── Second user message after Robin asked for name: collect name ──
+  const lastAssistant = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1].content : '';
+  const askedForName = typeof lastAssistant === 'string' && lastAssistant.includes("what's your name?");
+
+  if (askedForName && !state.collected_name) {
     const trimmed = latestMessage.trim();
     const looksLikeQuestion = /^(what|how|can|do|is|are|why|when|where|which|tell|show|help|i need|i want|i'm looking)/i.test(trimmed);
 
     if (looksLikeQuestion || trimmed.startsWith('/') || trimmed.length > 50) {
-      // Skipped name — go straight to AI
-      state.awaiting_initial_name = false;
-      // Fall through to AI response below
+      // Skipped name — fall through to AI response below
     } else {
       const name = trimmed.split(/\s+/).slice(0, 3).join(' ');
       state.collected_name = name;
-      state.awaiting_initial_name = false;
       addToHistory(sessionId, "user", latestMessage);
       addToHistory(sessionId, "assistant", `Nice to meet you, ${name}! What brings you here today?`);
       return makeResponse(
@@ -306,6 +326,27 @@ export async function POST(req: Request) {
           suggested_questions: ["I need a website", "I want an AI chatbot", "Tell me about pricing"],
         }
       );
+    }
+  }
+
+  // ── Rebuild booking state from messages (survives cold starts) ──
+  if (!state.booking_step) {
+    for (let i = assistantMessages.length - 1; i >= 0; i--) {
+      const content = assistantMessages[i].content;
+      if (typeof content !== 'string') continue;
+      if (content.includes("Isaac will reach out to you shortly")) break; // booking already completed
+      if (content.includes("your email address?")) { state.booking_step = 'awaiting_email'; state.booking_reason = state.booking_reason || 'Book a Call'; break; }
+      if (content.includes("phone number?")) { state.booking_step = 'awaiting_phone'; state.booking_reason = state.booking_reason || 'Book a Call'; break; }
+      if (content.includes("connect you with Isaac") && content.includes("your name?")) { state.booking_step = 'awaiting_name'; state.booking_reason = state.booking_reason || 'Book a Call'; break; }
+    }
+    // Also extract any previously collected phone from history
+    if (!state.collected_phone) {
+      for (const msg of messages) {
+        if (msg.role === 'user') {
+          const p = containsPhone(msg.content);
+          if (p) state.collected_phone = p;
+        }
+      }
     }
   }
 
@@ -351,6 +392,14 @@ export async function POST(req: Request) {
     const email = containsEmail(latestMessage);
     if (email) state.collected_email = email;
     addToHistory(sessionId, "user", latestMessage);
+
+    // Rebuild history for summary from messages array
+    for (const msg of messages) {
+      const existing = getHistory(sessionId);
+      if (existing.length < MAX_HISTORY) {
+        addToHistory(sessionId, msg.role, msg.content);
+      }
+    }
 
     // Send lead alert
     await sendWebLeadAlert(sessionId);
@@ -415,12 +464,10 @@ export async function POST(req: Request) {
 
   // ── AI response ──
   try {
-    addToHistory(sessionId, "user", latestMessage);
-    const history = getHistory(sessionId);
-
+    // Use client-sent messages array (persists across cold starts) instead of in-memory history
     const apiMessages = [
       { role: "system", content: getSystemPrompt(state.collected_name || undefined) },
-      ...history,
+      ...messages.slice(-MAX_HISTORY).map((msg: any) => ({ role: msg.role, content: msg.content })),
     ];
 
     const response = await fetch(OPENAI_URL, {
