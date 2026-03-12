@@ -272,7 +272,7 @@ function ChatArea() {
                 <div className="flex items-center gap-3">
                   <BookOpenText className="text-cyan-400 shrink-0" />
                   <p className="text-muted-foreground">
-                    Learn about our services and book a free consultation
+                    Learn about our services and book a call
                   </p>
                 </div>
               </div>

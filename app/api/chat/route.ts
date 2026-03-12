@@ -15,7 +15,7 @@ const HUMAN_ESCALATION_RESPONSE = {
   suggested_questions: [
     "What services does IonicX offer?",
     "How much does an AI chatbot cost?",
-    "Can I book a free consultation?",
+    "Book a Call",
   ],
   debug: { context_used: false },
   redirect_to_agent: { should_redirect: false, reason: "" },
