@@ -1,4 +1,6 @@
-// Updated by Bruce test
+// Telegram Bot for IonicX AI
+// Uses the same knowledge base and response logic as WhatsApp bot
+
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -9,14 +11,7 @@ app.use(express.json());
 // Telegram Bot API
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
 
-// WhatsApp API helper
-const WA_API = () => `https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
-const WA_HEADERS = () => ({
-  'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-  'Content-Type': 'application/json'
-});
-
-// IonicX AI Knowledge Base
+// IonicX AI Knowledge Base (shared with WhatsApp bot)
 const knowledgeBase = {
   services: `🚀 *IonicX AI* builds AI-powered websites and WhatsApp chatbots for Singapore SMEs.
 
@@ -93,7 +88,7 @@ He typically responds within a few hours during business hours (Mon-Fri 9am-6pm 
 
 IonicX AI helps Singapore SMEs grow with AI-powered websites, WhatsApp chatbots, and automation tools. We make it easy for small businesses to look professional and capture more leads — all without the enterprise price tag.
 
-Feel free to ask me about our services, pricing, or portfolio — or type *menu* to see all options!`,
+Feel free to ask me about our services, pricing, or portfolio — or type /menu to see all options!`,
 
   menu: `👋 Hello! I'm the IonicX AI Assistant.
 
@@ -103,10 +98,18 @@ I can help you with:
 🎯 See Our Work
 📞 Contact Us
 
-Tap the button below to browse, or just tell me about your business needs!`
+Tap the button below to browse, or just tell me about your business needs!`,
+
+  start: `👋 Welcome to *IonicX AI*!
+
+I'm your AI assistant, here to help you explore how we can automate your business with AI-powered websites and chatbots.
+
+What would you like to know?
+
+Type /menu to see options or just ask me anything!`
 };
 
-// Keyword matching for responses
+// Keyword matching for responses (shared logic)
 function generateResponse(message) {
   const lowerMsg = message.toLowerCase().trim();
 
@@ -119,8 +122,8 @@ function generateResponse(message) {
   }
 
   // Menu / greeting triggers
-  if (['menu', 'help', 'start', 'hi', 'hello', 'hey'].includes(lowerMsg)) {
-    return { text: knowledgeBase.menu, type: 'menu' };
+  if (['menu', 'help', 'start', 'hi', 'hello', 'hey', '/start', '/menu'].includes(lowerMsg)) {
+    return { text: knowledgeBase.start, type: 'menu' };
   }
 
   if (lowerMsg.includes('price') || lowerMsg.includes('cost') || lowerMsg.includes('how much') || lowerMsg.includes('pricing')) {
@@ -139,209 +142,9 @@ function generateResponse(message) {
     return { text: knowledgeBase.contact, type: 'info' };
   }
 
-  // Default fallback — conversational, not the menu
+  // Default fallback
   return { text: knowledgeBase.fallback, type: 'fallback' };
 }
-
-// Send a plain text message
-async function sendTextMessage(to, text) {
-  try {
-    const response = await axios.post(WA_API(), {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to,
-      type: 'text',
-      text: { body: text }
-    }, { headers: WA_HEADERS() });
-    console.log('Text message sent:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('Error sending text:', error.response?.data || error.message);
-    throw error;
-  }
-}
-
-// Send WhatsApp interactive list message (main menu)
-async function sendInteractiveList(to) {
-  try {
-    const response = await axios.post(WA_API(), {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to,
-      type: 'interactive',
-      interactive: {
-        type: 'list',
-        header: { type: 'text', text: 'IonicX AI' },
-        body: { text: knowledgeBase.menu },
-        footer: { text: 'Tap below to explore' },
-        action: {
-          button: 'Browse Options',
-          sections: [{
-            title: 'What can I help with?',
-            rows: [
-              { id: 'menu_services', title: '🚀 Our Services', description: 'AI websites, chatbots & automation' },
-              { id: 'menu_pricing', title: '💰 Pricing Plans', description: 'Starter, Growth, Scale & Enterprise' },
-              { id: 'menu_demos', title: '🎯 See Our Work', description: 'Portfolio demos & live examples' },
-              { id: 'menu_contact', title: '📞 Contact Us', description: 'Reach Isaac directly' }
-            ]
-          }]
-        }
-      }
-    }, { headers: WA_HEADERS() });
-    console.log('Interactive list sent:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('Error sending list:', error.response?.data || error.message);
-    throw error;
-  }
-}
-
-// Send reply buttons after a response ("Back to Menu" + "Talk to Isaac")
-async function sendReplyButtons(to, bodyText) {
-  try {
-    const response = await axios.post(WA_API(), {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to,
-      type: 'interactive',
-      interactive: {
-        type: 'button',
-        body: { text: bodyText },
-        action: {
-          buttons: [
-            { type: 'reply', reply: { id: 'btn_menu', title: '📋 Back to Menu' } },
-            { type: 'reply', reply: { id: 'btn_human', title: '👤 Talk to Isaac' } }
-          ]
-        }
-      }
-    }, { headers: WA_HEADERS() });
-    console.log('Reply buttons sent:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('Error sending buttons:', error.response?.data || error.message);
-    throw error;
-  }
-}
-
-// Handle interactive message selections (button clicks / list picks)
-function handleInteractiveMessage(message) {
-  const interactive = message.interactive;
-  if (interactive.type === 'button_reply') {
-    const id = interactive.button_reply.id;
-    if (id === 'btn_menu') return { text: knowledgeBase.menu, type: 'menu' };
-    if (id === 'btn_human') return { text: knowledgeBase.human, type: 'human' };
-  }
-  if (interactive.type === 'list_reply') {
-    const id = interactive.list_reply.id;
-    if (id === 'menu_services') return { text: knowledgeBase.services, type: 'info' };
-    if (id === 'menu_pricing') return { text: knowledgeBase.pricing, type: 'info' };
-    if (id === 'menu_demos') return { text: knowledgeBase.demos, type: 'info' };
-    if (id === 'menu_contact') return { text: knowledgeBase.contact, type: 'info' };
-  }
-  return { text: knowledgeBase.fallback, type: 'fallback' };
-}
-
-// Webhook verification (GET)
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
-    console.log('Webhook verified');
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
-  }
-});
-
-// Webhook for incoming messages (POST)
-app.post('/webhook', async (req, res) => {
-  try {
-    const body = req.body;
-
-    if (body.object === 'whatsapp_business_account') {
-      const entry = body.entry?.[0];
-      const changes = entry?.changes?.[0];
-      const value = changes?.value;
-
-      if (value?.messages) {
-        const message = value.messages[0];
-        const from = message.from;
-
-        let result;
-
-        // Handle interactive replies (button / list selections)
-        if (message.type === 'interactive') {
-          result = handleInteractiveMessage(message);
-        } else {
-          // Handle text messages
-          const msgBody = message.text?.body || '';
-          console.log(`Received from ${from}: ${msgBody}`);
-          result = generateResponse(msgBody);
-        }
-
-        // Send response based on type
-        if (result.type === 'menu') {
-          await sendInteractiveList(from);
-        } else {
-          // Send the text content first
-          await sendTextMessage(from, result.text);
-          // Then send follow-up reply buttons
-          await sendReplyButtons(from, 'What would you like to do next?');
-        }
-      }
-    }
-
-    res.sendStatus(200);
-  } catch (error) {
-    console.error('Webhook error:', error);
-    res.sendStatus(200); // Always return 200 to WhatsApp
-  }
-});
-
-// Health check
-app.get('/', (req, res) => {
-  res.json({
-    status: 'IonicX AI Chatbot is running',
-    timestamp: new Date().toISOString(),
-    services: {
-      whatsapp: 'active',
-      telegram: 'active'
-    },
-    bot: 'Robin - IonicX AI Sales Assistant'
-  });
-});
-
-// Health endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() });
-});
-
-// Version endpoint
-app.get('/version', (req, res) => {
-  res.json({ 
-    version: '1.1.0', 
-    name: 'IonicX AI Bot (WhatsApp + Telegram)',
-    telegram_bot: 'Robin - Sales Assistant'
-  });
-});
-
-// Ping endpoint
-app.get('/ping', (req, res) => {
-  res.json({ pong: true, timestamp: Date.now() });
-});
-
-// Test endpoint (for development)
-app.post('/test', (req, res) => {
-  const { message } = req.body;
-  const result = generateResponse(message);
-  res.json({ message, reply: result.text, type: result.type });
-});
-
-// ============================================
-// TELEGRAM BOT ROUTES (Robin - IonicX AI Sales Assistant)
-// ============================================
 
 // Send message to Telegram
 async function sendTelegramMessage(chatId, text, options = {}) {
@@ -455,7 +258,7 @@ async function handleCallbackQuery(query) {
   }
 }
 
-// Telegram webhook handler
+// Webhook handler for Telegram
 app.post('/telegram-webhook', async (req, res) => {
   try {
     const update = req.body;
@@ -483,14 +286,14 @@ app.post('/telegram-webhook', async (req, res) => {
     res.sendStatus(200);
   } catch (error) {
     console.error('Telegram webhook error:', error);
-    res.sendStatus(200);
+    res.sendStatus(200); // Always return 200 to Telegram
   }
 });
 
-// Set Telegram webhook
+// Set webhook endpoint
 app.get('/set-telegram-webhook', async (req, res) => {
   try {
-    const webhookUrl = `https://${req.get('host')}/telegram-webhook`;
+    const webhookUrl = `${req.protocol}://${req.get('host')}/telegram-webhook`;
     
     const response = await axios.post(`${TELEGRAM_API}/setWebhook`, {
       url: webhookUrl,
@@ -509,7 +312,7 @@ app.get('/set-telegram-webhook', async (req, res) => {
   }
 });
 
-// Delete Telegram webhook
+// Delete webhook endpoint
 app.get('/delete-telegram-webhook', async (req, res) => {
   try {
     const response = await axios.post(`${TELEGRAM_API}/deleteWebhook`);
@@ -524,7 +327,7 @@ app.get('/delete-telegram-webhook', async (req, res) => {
   }
 });
 
-// Get Telegram webhook info
+// Get webhook info
 app.get('/telegram-webhook-info', async (req, res) => {
   try {
     const response = await axios.get(`${TELEGRAM_API}/getWebhookInfo`);
@@ -536,7 +339,7 @@ app.get('/telegram-webhook-info', async (req, res) => {
   }
 });
 
-// Get Telegram bot info
+// Get bot info
 app.get('/telegram-bot-info', async (req, res) => {
   try {
     const response = await axios.get(`${TELEGRAM_API}/getMe`);
@@ -548,9 +351,37 @@ app.get('/telegram-bot-info', async (req, res) => {
   }
 });
 
+// Health check
+app.get('/', (req, res) => {
+  res.json({
+    status: 'IonicX AI Telegram Bot is running',
+    timestamp: new Date().toISOString(),
+    bot: 'Robin - IonicX AI Sales Assistant'
+  });
+});
+
+// Health endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: Date.now(),
+    service: 'telegram-bot'
+  });
+});
+
+// Version endpoint
+app.get('/version', (req, res) => {
+  res.json({ 
+    version: '1.0.0', 
+    name: 'IonicX Telegram Bot (Robin)'
+  });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 IonicX AI Chatbot running on port ${PORT}`);
-  console.log(`📱 WhatsApp Webhook: https://your-domain.com/webhook`);
-  console.log(`🤖 Telegram Webhook: https://your-domain.com/telegram-webhook`);
+  console.log(`🚀 IonicX AI Telegram Bot (Robin) running on port ${PORT}`);
+  console.log(`🤖 Bot: @IonicXAI_Bot (update after creation)`);
+  console.log(`📱 Webhook URL: https://your-domain.com/telegram-webhook`);
 });
+
+module.exports = app;
