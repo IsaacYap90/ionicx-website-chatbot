@@ -354,13 +354,13 @@ function startBookingFlow(chatId: string, reason: string) {
 }
 
 // Send a complete lead alert with all collected info
-async function sendCompletedLeadAlert(chatId: string, userHandle: string) {
+async function sendCompletedLeadAlert(chatId: string, userHandle: string, telegramName?: string) {
   const state = getState(chatId);
   const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
 
   const alertText = buildLeadAlertText({
     title: 'New Lead from Telegram Bot',
-    prospectName: state.name || 'Unknown',
+    prospectName: state.name || telegramName || 'Unknown',
     userHandle,
     chatId,
     timestamp: sgtTimestamp,
@@ -667,7 +667,7 @@ export async function POST(req: Request) {
           await sendTelegramMessage(chatId, `No worries! How about your email address?`);
         } else {
           // Unrecognised input — complete flow with whatever we have
-          await sendCompletedLeadAlert(chatId, getUserHandle(message.from));
+          await sendCompletedLeadAlert(chatId, getUserHandle(message.from), (message.from?.first_name || '') + (message.from?.last_name ? ' ' + message.from.last_name : ''));
           const name = state.name || 'there';
           await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. Feel free to ask me anything in the meantime.`);
         }
@@ -680,7 +680,7 @@ export async function POST(req: Request) {
           state.collected_email = email;
         }
         // Complete the flow regardless
-        await sendCompletedLeadAlert(chatId, getUserHandle(message.from));
+        await sendCompletedLeadAlert(chatId, getUserHandle(message.from), (message.from?.first_name || '') + (message.from?.last_name ? ' ' + message.from.last_name : ''));
         const name = state.name || 'there';
         await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. In the meantime, feel free to ask me anything.`);
         return new Response('OK', { status: 200 });
@@ -694,7 +694,7 @@ export async function POST(req: Request) {
         const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
         const alertText = buildLeadAlertText({
           title: 'Lead Alert: Contact Details Shared',
-          prospectName: state.name || (message.from?.first_name + (message.from?.last_name ? ' ' + message.from.last_name : '')) || 'Unknown',
+          prospectName: state.name || ((message.from?.first_name || '') + (message.from?.last_name ? ' ' + message.from.last_name : '')) || 'Unknown',
           userHandle: getUserHandle(message.from),
           chatId,
           timestamp: sgtTimestamp,
@@ -709,14 +709,14 @@ export async function POST(req: Request) {
       // Get AI response with conversation history
       const aiResponse = await getAIResponse(chatId, messageText);
 
-      // Send AI response WITHOUT inline buttons (no button spam)
-      await sendTelegramMessage(chatId, aiResponse.response);
-
-      // If AI flagged escalation, start booking flow instead of dead-end
       if (aiResponse.should_escalate) {
+        // Booking flow takes over — suppress the AI message entirely
         startBookingFlow(chatId, aiResponse.escalation_reason || 'Wants to speak to Isaac');
         const name = state.name || 'there';
-        await sendTelegramMessage(chatId, `Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
+        await sendTelegramMessage(chatId, `Sure thing, ${name}! Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
+      } else {
+        // Normal AI response — no escalation
+        await sendTelegramMessage(chatId, aiResponse.response);
       }
     }
 
