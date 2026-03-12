@@ -5,7 +5,7 @@ export async function POST(req: Request) {
     console.log('Received update:', JSON.stringify(update));
     
     // Simple test - just send an alert
-    const LEADS_BOT_TOKEN = "8351114666:AAHCnEtNiRHSyjDBbZ-4y5G7axlBmCY8uk0";
+    const LEADS_BOT_TOKEN = process.env.IONICX_LEADS_BOT_TOKEN;
     const ISAAC_CHAT_ID = 1729085064;
     
     const alertText = `🚨 *Test Alert*

@@ -11,7 +11,7 @@ const ISAAC_CHAT_ID = 1729085064; // For Telegram escalation alerts (must be num
 const ISAAC_WHATSAPP = "6580268821"; // For WhatsApp escalation alerts
 
 // IonicX Leads Bot for alerts
-const LEADS_BOT_TOKEN = "LEADS_BOT_TOKEN_REDACTED";
+const LEADS_BOT_TOKEN = process.env.IONICX_LEADS_BOT_TOKEN;
 const LEADS_BOT_API = `https://api.telegram.org/bot${LEADS_BOT_TOKEN}`;
 
 // WhatsApp Cloud API config (for sending alerts to Isaac)
@@ -377,13 +377,15 @@ export async function POST(req: Request) {
         const user = update.callback_query.from;
         const userName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
         const userHandle = user.username ? `@${user.username}` : 'No username';
-        
+        const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
+
         // Send alert via Leads Bot to Isaac
         const alertText = `🚨 *Lead Alert: Talk to Isaac*
 
 *User:* ${userName}
 *Username:* ${userHandle}
 *Chat ID:* ${chatId}
+*Time (SGT):* ${sgtTimestamp}
 *Action:* Clicked "Talk to Isaac" button
 
 Reply: https://t.me/IonicXAI_Assistant`;
@@ -467,9 +469,17 @@ What brings you here today?`;
       
       // Smart handoff: if escalation needed, alert Isaac via Leads Bot and WhatsApp
       if (aiResponse.should_escalate) {
+        const escalationUser = message.from;
+        const escalationName = escalationUser?.first_name + (escalationUser?.last_name ? ' ' + escalationUser.last_name : '');
+        const escalationHandle = escalationUser?.username ? `@${escalationUser.username}` : 'No username';
+        const escalationTime = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
+
         const alertText = `🚨 *Lead Alert from Telegram Bot*
 
+*User:* ${escalationName}
+*Username:* ${escalationHandle}
 *Chat ID:* ${chatId}
+*Time (SGT):* ${escalationTime}
 *Message:* ${messageText}
 *Reason:* ${aiResponse.escalation_reason}
 
