@@ -13,11 +13,13 @@ const knowledgeBase = loadKnowledgeBase();
 // ─── In-memory state (per-session via sessionId) ─────────────────────────────
 
 interface WebChatState {
+  awaiting_initial_name?: boolean;
   booking_step?: 'awaiting_name' | 'awaiting_phone' | 'awaiting_email' | null;
   booking_reason?: string;
   collected_name?: string;
   collected_phone?: string;
   collected_email?: string;
+  greeted?: boolean;
 }
 
 const chatStates = new Map<string, WebChatState>();
@@ -140,7 +142,7 @@ async function sendWebLeadAlert(sessionId: string) {
 
 // ─── System prompt (matches Telegram Robin) ──────────────────────────────────
 
-function getSystemPrompt(): string {
+function getSystemPrompt(userName?: string): string {
   const now = new Date().toLocaleString('en-SG', {
     timeZone: 'Asia/Singapore',
     weekday: 'long',
@@ -155,6 +157,7 @@ function getSystemPrompt(): string {
   return `You are Robin — IonicX AI's friendly, consultative sales assistant on the IonicX website. IonicX is a Singapore-based AI technology company and NVIDIA Connect Partner that builds AI-powered solutions for SMEs in Singapore and Johor Bahru.
 
 Current date and time (SGT): ${now}. Always use this as today's date. Never guess or hallucinate dates.
+${userName ? `\nThe user's name is ${userName}. Use their name naturally in responses (not every message, but occasionally to keep it personal).` : ''}
 
 About Isaac Yap — Founder of IonicX AI:
 Isaac is the founder of IonicX AI. He's a former logistics professional and Muay Thai coach turned self-taught developer who built IonicX to help Singapore and JB SMEs adopt AI. IonicX is now an NVIDIA Connect Partner. When users ask about Isaac, share this background naturally.
@@ -269,6 +272,43 @@ export async function POST(req: Request) {
 
   const state = getState(sessionId);
 
+  // ── First message: ask for name ──
+  if (!state.greeted) {
+    state.greeted = true;
+    state.awaiting_initial_name = true;
+    addToHistory(sessionId, "user", latestMessage);
+    addToHistory(sessionId, "assistant", "Hi, I'm Robin — IonicX AI's assistant. Before we get started, what's your name?");
+    return makeResponse(
+      "👋 Hi, I'm Robin — IonicX AI's assistant.\n\nBefore we get started, what's your name?",
+      { thinking: "First message — asking for name", suggested_questions: [] }
+    );
+  }
+
+  // ── Awaiting initial name ──
+  if (state.awaiting_initial_name) {
+    const trimmed = latestMessage.trim();
+    const looksLikeQuestion = /^(what|how|can|do|is|are|why|when|where|which|tell|show|help|i need|i want|i'm looking)/i.test(trimmed);
+
+    if (looksLikeQuestion || trimmed.startsWith('/') || trimmed.length > 50) {
+      // Skipped name — go straight to AI
+      state.awaiting_initial_name = false;
+      // Fall through to AI response below
+    } else {
+      const name = trimmed.split(/\s+/).slice(0, 3).join(' ');
+      state.collected_name = name;
+      state.awaiting_initial_name = false;
+      addToHistory(sessionId, "user", latestMessage);
+      addToHistory(sessionId, "assistant", `Nice to meet you, ${name}! What brings you here today?`);
+      return makeResponse(
+        `Nice to meet you, ${name}! What brings you here today?`,
+        {
+          thinking: "Name collected, asking about needs",
+          suggested_questions: ["I need a website", "I want an AI chatbot", "Tell me about pricing"],
+        }
+      );
+    }
+  }
+
   // ── Booking flow state machine ──
   if (state.booking_step === 'awaiting_name') {
     const trimmed = latestMessage.trim();
@@ -328,14 +368,26 @@ export async function POST(req: Request) {
 
   // ── Check for booking trigger ──
   if (isBookingTrigger(latestMessage)) {
-    state.booking_step = 'awaiting_name';
     state.booking_reason = 'Clicked "Book a Call" on website';
     addToHistory(sessionId, "user", latestMessage);
-    addToHistory(sessionId, "assistant", "I'd love to connect you with Isaac! What's your name?");
-    return makeResponse(
-      "I'd love to connect you with Isaac! First, what's your name?",
-      { thinking: "Starting booking flow", suggested_questions: [] }
-    );
+
+    if (state.collected_name) {
+      // Already have name, skip to phone
+      state.booking_step = 'awaiting_phone';
+      const name = state.collected_name;
+      addToHistory(sessionId, "assistant", `Great, ${name}! What's your phone number?`);
+      return makeResponse(
+        `Great, ${name}! I'd love to connect you with Isaac. What's your phone number? (e.g. +65 9123 4567)`,
+        { thinking: "Starting booking flow — name already collected", suggested_questions: ["Skip", "I'd rather not share"] }
+      );
+    } else {
+      state.booking_step = 'awaiting_name';
+      addToHistory(sessionId, "assistant", "I'd love to connect you with Isaac! What's your name?");
+      return makeResponse(
+        "I'd love to connect you with Isaac! First, what's your name?",
+        { thinking: "Starting booking flow", suggested_questions: [] }
+      );
+    }
   }
 
   // ── Check for unprompted contact details ──
@@ -367,7 +419,7 @@ export async function POST(req: Request) {
     const history = getHistory(sessionId);
 
     const apiMessages = [
-      { role: "system", content: getSystemPrompt() },
+      { role: "system", content: getSystemPrompt(state.collected_name || undefined) },
       ...history,
     ];
 
