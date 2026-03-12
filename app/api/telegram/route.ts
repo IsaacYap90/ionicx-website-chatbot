@@ -55,6 +55,32 @@ function addToHistory(chatId: string, role: string, content: string) {
   if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
 }
 
+// Store name in conversation history so it survives serverless cold starts
+const NAME_MARKER = '[NAME_COLLECTED]:';
+
+function storeNameInHistory(chatId: string, name: string) {
+  const history = getHistory(chatId);
+  // Add as first entry so it's always available and never trimmed by recency
+  history.unshift({ role: 'system', content: `${NAME_MARKER} ${name}` });
+}
+
+// Extract name from conversation history (survives cold starts), then chatStates, then Telegram profile
+function getStoredName(chatId: string, telegramName?: string): string {
+  // 1. Check conversation history for the name marker
+  const history = getHistory(chatId);
+  for (const msg of history) {
+    if (msg.content.startsWith(NAME_MARKER)) {
+      return msg.content.slice(NAME_MARKER.length).trim();
+    }
+  }
+  // 2. Check chatStates (works on warm instances)
+  const state = getState(chatId);
+  if (state.name) return state.name;
+  // 3. Telegram profile name
+  if (telegramName) return telegramName;
+  return 'Unknown';
+}
+
 function getTelegramName(from: any): string {
   return (from?.first_name || '') + (from?.last_name ? ' ' + from.last_name : '');
 }
@@ -299,8 +325,8 @@ function buildLeadAlertText(params: {
   timestamp: string; reason: string; phone?: string; email?: string; conversationContext?: string;
 }): string {
   let text = `🚨 ${params.title}\n\nName: ${params.prospectName}\nUsername: ${params.userHandle}\nChat ID: ${params.chatId}\n`;
-  if (params.phone) text += `Phone: ${params.phone}\n`;
-  if (params.email) text += `Email: ${params.email}\n`;
+  text += `Phone: ${params.phone || 'Not provided'}\n`;
+  text += `Email: ${params.email || 'Not provided'}\n`;
   text += `Reason: ${params.reason}\nTime (SGT): ${params.timestamp}\n`;
   if (params.conversationContext) text += `Context: ${params.conversationContext}\n`;
   text += `\nReply: https://t.me/IonicXAI_Assistant`;
@@ -341,7 +367,7 @@ async function sendCompletedLeadAlert(chatId: string, userHandle: string, telegr
   const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
   const alertText = buildLeadAlertText({
     title: 'New Lead from Telegram Bot',
-    prospectName: state.name || telegramName || 'Unknown',
+    prospectName: getStoredName(chatId, telegramName),
     userHandle, chatId, timestamp: sgtTimestamp,
     reason: state.booking_reason || 'Wants to speak to Isaac',
     phone: state.collected_phone, email: state.collected_email,
@@ -369,9 +395,12 @@ async function getAIResponse(chatId: string, message: string): Promise<string> {
   try {
     const state = getState(chatId);
     const history = getHistory(chatId);
+    const resolvedName = getStoredName(chatId);
+    // Filter out name marker from messages sent to OpenAI
+    const cleanHistory = history.filter(m => !m.content.startsWith(NAME_MARKER));
     const messages = [
-      { role: "system", content: getSystemPrompt(state.name) },
-      ...history,
+      { role: "system", content: getSystemPrompt(resolvedName !== 'Unknown' ? resolvedName : state.name) },
+      ...cleanHistory,
       { role: "user", content: message }
     ];
 
@@ -424,7 +453,8 @@ export async function POST(req: Request) {
 
       // "Book a Free Consultation" or "Talk to Isaac" → booking flow
       if (data === 'btn_book') {
-        const name = state.name || 'there';
+        const resolved = getStoredName(chatId, getTelegramName(query.from));
+        const name = resolved !== 'Unknown' ? resolved : 'there';
         startBookingFlow(chatId, 'Clicked "Book a Free Consultation"');
         await sendTelegramMessage(chatId, `Great, ${name}! What's your phone number?`);
 
@@ -433,7 +463,7 @@ export async function POST(req: Request) {
         const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
         const alertText = buildLeadAlertText({
           title: 'Lead Alert: Booking Started',
-          prospectName: state.name || getTelegramName(user),
+          prospectName: getStoredName(chatId, getTelegramName(user)),
           userHandle: getUserHandle(user), chatId, timestamp: sgtTimestamp,
           reason: 'Clicked "Book a Free Consultation" — collecting phone/email',
           conversationContext: getConversationSummary(chatId)
@@ -444,7 +474,8 @@ export async function POST(req: Request) {
 
       // "Ask Another Question" → prompt for next question
       if (data === 'btn_ask') {
-        const name = state.name || 'there';
+        const resolved = getStoredName(chatId, getTelegramName(query.from));
+        const name = resolved !== 'Unknown' ? resolved : 'there';
         await sendTelegramMessage(chatId, `Sure, ${name}! What else would you like to know?`);
         return new Response('OK', { status: 200 });
       }
@@ -501,10 +532,11 @@ export async function POST(req: Request) {
           return new Response('OK', { status: 200 });
         }
 
-        // Store name
+        // Store name in both chatStates AND conversation history
         const name = trimmed.split(/\s+/).slice(0, 3).join(' ');
         state.name = name;
         state.awaiting_name = false;
+        storeNameInHistory(chatId, name);
         console.log(`User ${chatId} identified as: ${name}`);
 
         await sendInlineKeyboard(
@@ -555,7 +587,7 @@ export async function POST(req: Request) {
         const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
         const alertText = buildLeadAlertText({
           title: 'Lead Alert: Contact Details Shared',
-          prospectName: state.name || getTelegramName(message.from) || 'Unknown',
+          prospectName: getStoredName(chatId, getTelegramName(message.from)),
           userHandle: getUserHandle(message.from), chatId, timestamp: sgtTimestamp,
           reason: 'User shared contact details unprompted',
           phone: detectedPhone || undefined, email: detectedEmail || undefined,
