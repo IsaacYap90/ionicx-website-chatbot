@@ -388,10 +388,10 @@ export async function POST(req: Request) {
 
 Reply: https://t.me/IonicXAI_Assistant`;
         
-        console.log('Sending Leads Bot alert to Isaac...');
+        console.log('Sending alert to Isaac via main bot...');
         try {
-          // Inline Leads Bot alert sending
-          const leadsResponse = await fetch(`${LEADS_BOT_API}/sendMessage`, {
+          // Send alert using main bot token
+          const alertResponse = await fetch(`${TELEGRAM_API}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -400,13 +400,13 @@ Reply: https://t.me/IonicXAI_Assistant`;
               parse_mode: 'Markdown'
             })
           });
-          const leadsData = await leadsResponse.json();
-          console.log('Leads Bot response:', leadsData.ok);
-          if (!leadsData.ok) {
-            console.error('Leads Bot API error:', leadsData.description);
+          const alertData = await alertResponse.json();
+          console.log('Alert response:', alertData.ok);
+          if (!alertData.ok) {
+            console.error('Alert API error:', alertData.description);
           }
         } catch (error) {
-          console.error('Leads Bot alert failed:', error);
+          console.error('Alert failed:', error);
         }
         
         // Send WhatsApp alert to Isaac (skip if WhatsApp API not configured)
