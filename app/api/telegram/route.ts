@@ -26,7 +26,25 @@ const knowledgeBase = loadKnowledgeBase();
 
 // In-memory conversation history (per chat ID, survives across warm invocations)
 const conversationHistory = new Map<string, { role: string; content: string }[]>();
-const MAX_HISTORY = 20; // Keep last 20 messages per chat
+const MAX_HISTORY = 20;
+
+// Per-chat state: name, booking flow, etc.
+interface ChatState {
+  name?: string;
+  awaiting_name?: boolean;
+  booking_step?: 'awaiting_phone' | 'awaiting_email' | null;
+  booking_reason?: string;
+  collected_phone?: string;
+  collected_email?: string;
+}
+const chatStates = new Map<string, ChatState>();
+
+function getState(chatId: string): ChatState {
+  if (!chatStates.has(chatId)) {
+    chatStates.set(chatId, {});
+  }
+  return chatStates.get(chatId)!;
+}
 
 function getHistory(chatId: string): { role: string; content: string }[] {
   if (!conversationHistory.has(chatId)) {
@@ -44,7 +62,7 @@ function addToHistory(chatId: string, role: string, content: string) {
 }
 
 // Dynamic system prompt with current SGT date/time injected on every call
-function getSystemPrompt(): string {
+function getSystemPrompt(userName?: string): string {
   const now = new Date().toLocaleString('en-SG', {
     timeZone: 'Asia/Singapore',
     weekday: 'long',
@@ -56,9 +74,12 @@ function getSystemPrompt(): string {
     hour12: true
   });
 
+  const nameContext = userName ? `\nThe user's name is ${userName}. Use their name naturally in responses (not every message, but occasionally to keep it personal).` : '';
+
   return `You are Robin — IonicX AI's friendly, consultative sales assistant on Telegram. IonicX is a Singapore-based AI technology company and NVIDIA Connect Partner that builds AI-powered solutions for SMEs in Singapore and Johor Bahru.
 
 Current date and time (SGT): ${now}. Always use this as today's date. Never guess or hallucinate dates.
+${nameContext}
 
 About Isaac Yap — Founder of IonicX AI:
 Isaac is the founder of IonicX AI. He's a former logistics professional and Muay Thai coach turned self-taught developer who built IonicX to help Singapore and JB SMEs adopt AI. IonicX is now an NVIDIA Connect Partner. When users ask about Isaac, share this background naturally.
@@ -87,21 +108,30 @@ Pricing (only share when asked or when it naturally fits):
 - Enterprise: S$15,888 + S$2,388/year (bespoke AI solutions)
 - Custom builds available for unique requirements
 
-Rules:
+STRICT RESPONSE FORMAT RULES:
+- Maximum 3 short bullet points per response. No paragraphs. No exceptions.
+- Each bullet point should be one sentence.
+- End with a question or CTA.
+- Example format:
+  - [Specific point 1]
+  - [Specific point 2]
+  - [Specific point 3]
+  Would you like to explore further?
 - Respond in the same language the user writes in (English or Chinese)
-- Keep responses to 2-3 sentences max. Be conversational, not essay-length.
-- Only use numbered lists or bullet points if the user explicitly asks for detail.
 - Ask one question at a time. Do not stack multiple questions.
 - Be warm, curious, and genuinely helpful — not pushy
+
+Other rules:
 - When you sense buying intent or the user wants to discuss specifics, suggest they tap "Talk to Isaac"
 - If you don't know something, be honest and offer to connect them with Isaac
-- You CANNOT book meetings or arrange calls yourself. When a user wants to book or schedule, say "Isaac will reach out to confirm" — never say "I'll arrange it"
+- When a user wants to book, schedule, or speak to Isaac, tell them you'll collect their details so Isaac can reach out. Do NOT just say "Isaac will reach out" as a dead end — instead ask for their phone number to start the booking flow.
 - Do NOT proactively mention EIS. If asked, say: "Budget 2026 announced the EIS expansion for AI spending. IRAS is publishing detailed guidelines by mid-2026. We will keep you updated once confirmed."
 - Never make up facts about IonicX
 
 Escalation rules — set should_escalate to true ONLY when:
 - User shares a phone number, email address, or other contact details (include the contact info in escalation_reason)
 - User EXPLICITLY asks to speak to a human, real person, or Isaac (e.g. "can I talk to Isaac", "connect me to someone", "I want to speak to a real person")
+- User wants to book a consultation or schedule a call
 
 Do NOT set should_escalate for:
 - Questions ABOUT Isaac (e.g. "who is Isaac", "what does Isaac do")
@@ -133,7 +163,6 @@ async function sendTelegramMessage(chatId: string, text: string, options: any = 
 
     const data = await response.json();
     if (!data.ok) {
-      // Retry without Markdown if parsing failed
       console.error('Telegram send failed, retrying without Markdown:', data.description);
       const retryResponse = await fetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
@@ -168,7 +197,6 @@ async function sendInlineKeyboard(chatId: string, text: string, buttons: any[][]
 
     const data = await response.json();
     if (!data.ok) {
-      // Retry without Markdown if parsing failed
       console.error('Inline keyboard Markdown failed, retrying:', data.description);
       const retryResponse = await fetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
@@ -229,7 +257,6 @@ async function sendLeadsBotAlert(chatId: string | number, text: string) {
   const payload = {
     chat_id: chatId,
     text: text
-    // No parse_mode — plain text to avoid Markdown failures with URLs containing underscores
   };
 
   console.log('Sending Leads Bot alert to:', url);
@@ -257,12 +284,98 @@ async function sendLeadsBotAlert(chatId: string | number, text: string) {
   }
 }
 
+// Build plain-text alert (no Markdown to avoid URL underscore issues)
+function buildLeadAlertText(params: {
+  title: string;
+  prospectName: string;
+  userHandle: string;
+  chatId: string;
+  timestamp: string;
+  reason: string;
+  phone?: string;
+  email?: string;
+  conversationContext?: string;
+}): string {
+  let text = `🚨 ${params.title}\n\n`;
+  text += `Name: ${params.prospectName}\n`;
+  text += `Username: ${params.userHandle}\n`;
+  text += `Chat ID: ${params.chatId}\n`;
+  if (params.phone) text += `Phone: ${params.phone}\n`;
+  if (params.email) text += `Email: ${params.email}\n`;
+  text += `Reason: ${params.reason}\n`;
+  text += `Time (SGT): ${params.timestamp}\n`;
+  if (params.conversationContext) text += `Context: ${params.conversationContext}\n`;
+  text += `\nReply: https://t.me/IonicXAI_Assistant`;
+  return text;
+}
+
+// Send lead alert to all channels
+async function sendLeadAlerts(alertText: string) {
+  try {
+    await sendLeadsBotAlert(ISAAC_CHAT_ID, alertText);
+    console.log('Leads Bot alert sent');
+  } catch (error) {
+    console.error('Leads Bot alert failed, falling back to main bot:', error);
+    await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
+  }
+
+  if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) {
+    try {
+      await sendWhatsAppMessage(ISAAC_WHATSAPP, alertText);
+    } catch (error) {
+      console.error('WhatsApp alert failed:', error);
+    }
+  }
+}
+
+// Get a short summary of the last few conversation messages for alert context
+function getConversationSummary(chatId: string): string {
+  const history = getHistory(chatId);
+  const recent = history.slice(-6); // last 3 exchanges
+  if (recent.length === 0) return 'No prior conversation';
+  return recent.map(m => `${m.role === 'user' ? 'User' : 'Robin'}: ${m.content.substring(0, 100)}`).join('\n');
+}
+
+// Start the booking flow for a chat
+function startBookingFlow(chatId: string, reason: string) {
+  const state = getState(chatId);
+  state.booking_step = 'awaiting_phone';
+  state.booking_reason = reason;
+  state.collected_phone = undefined;
+  state.collected_email = undefined;
+}
+
+// Send a complete lead alert with all collected info
+async function sendCompletedLeadAlert(chatId: string, userHandle: string) {
+  const state = getState(chatId);
+  const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
+
+  const alertText = buildLeadAlertText({
+    title: 'New Lead from Telegram Bot',
+    prospectName: state.name || 'Unknown',
+    userHandle,
+    chatId,
+    timestamp: sgtTimestamp,
+    reason: state.booking_reason || 'Wants to speak to Isaac',
+    phone: state.collected_phone,
+    email: state.collected_email,
+    conversationContext: getConversationSummary(chatId)
+  });
+
+  await sendLeadAlerts(alertText);
+  console.log(`Lead alert sent for chat ${chatId}`);
+
+  // Reset booking state
+  state.booking_step = null;
+  state.booking_reason = undefined;
+}
+
 async function getAIResponse(chatId: string, message: string): Promise<{ response: string; should_escalate: boolean; escalation_reason: string }> {
   try {
-    // Build messages with conversation history and dynamic system prompt
+    const state = getState(chatId);
     const history = getHistory(chatId);
     const messages = [
-      { role: "system", content: getSystemPrompt() },
+      { role: "system", content: getSystemPrompt(state.name) },
       ...history,
       { role: "user", content: message }
     ];
@@ -298,7 +411,6 @@ async function getAIResponse(chatId: string, message: string): Promise<{ respons
       const parsed = JSON.parse(cleaned);
       const aiResponse = parsed.response || "I'm here to help! What does your business do?";
 
-      // Save to conversation history
       addToHistory(chatId, "user", message);
       addToHistory(chatId, "assistant", aiResponse);
 
@@ -392,13 +504,6 @@ Want a custom demo for your business? Let's talk!`,
 *Office Hours:*
 Mon-Fri: 9am - 6pm SGT`,
 
-  btn_human: `Sure! Here's how to reach Isaac directly:
-
-📧 isaac@ionicx.ai
-📱 WhatsApp: +65 8026 8821
-
-He typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).`,
-
   btn_menu: `👋 Hello! I'm Robin — IonicX AI's assistant.
 
 I can help you with:
@@ -410,22 +515,20 @@ I can help you with:
 Tap a button below or just tell me about your business needs!`
 };
 
-// Build plain-text alert (no Markdown to avoid URL underscore issues)
-function buildAlertText(params: {
-  title: string;
-  userName: string;
-  userHandle: string;
-  chatId: string;
-  timestamp: string;
-  action: string;
-  message?: string;
-  reason?: string;
-}): string {
-  let text = `🚨 ${params.title}\n\nUser: ${params.userName}\nUsername: ${params.userHandle}\nChat ID: ${params.chatId}\nTime (SGT): ${params.timestamp}\n`;
-  if (params.message) text += `Message: ${params.message}\n`;
-  if (params.reason) text += `Reason: ${params.reason}\n`;
-  text += `Action: ${params.action}\n\nReply: https://t.me/IonicXAI_Assistant`;
-  return text;
+// Detect if a message contains a phone number
+function containsPhone(text: string): string | null {
+  const phoneMatch = text.match(/(?:\+?\d{1,4}[\s-]?)?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}/);
+  return phoneMatch ? phoneMatch[0].trim() : null;
+}
+
+// Detect if a message contains an email
+function containsEmail(text: string): string | null {
+  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  return emailMatch ? emailMatch[0].trim() : null;
+}
+
+function getUserHandle(from: any): string {
+  return from?.username ? `@${from.username}` : 'No username';
 }
 
 export async function POST(req: Request) {
@@ -437,56 +540,35 @@ export async function POST(req: Request) {
       const query = update.callback_query;
       const chatId = query.message.chat.id.toString();
       const data = query.data;
+      const state = getState(chatId);
 
       console.log(`Telegram callback from ${chatId}: ${data}`);
 
-      // Answer the callback query (fire and forget)
       answerCallbackQuery(query.id).catch(err => console.error('Failed to answer callback:', err));
 
-      // Handle "Talk to Isaac" button - trigger contact card + alerts
+      // Handle "Talk to Isaac" button — start booking flow
       if (data === 'btn_human') {
-        console.log('Processing btn_human click...');
+        console.log('Processing btn_human click — starting booking flow...');
 
-        try {
-          await sendInlineKeyboard(chatId, menuResponses['btn_human'], mainMenuKeyboard);
-        } catch (error) {
-          console.error('Failed to send inline keyboard:', error);
-        }
+        const name = state.name || 'there';
+        startBookingFlow(chatId, 'Clicked "Talk to Isaac" button');
 
-        // Build and send alert
+        await sendTelegramMessage(chatId, `Of course, ${name}! Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
+
+        // Also send an immediate alert that someone clicked the button
         const user = update.callback_query.from;
-        const userName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
-        const userHandle = user.username ? `@${user.username}` : 'No username';
         const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
-
-        const alertText = buildAlertText({
-          title: 'Lead Alert: Talk to Isaac',
-          userName,
-          userHandle,
+        const alertText = buildLeadAlertText({
+          title: 'Lead Alert: Talk to Isaac (collecting details)',
+          prospectName: state.name || (user.first_name + (user.last_name ? ' ' + user.last_name : '')),
+          userHandle: getUserHandle(user),
           chatId,
           timestamp: sgtTimestamp,
-          action: 'Clicked "Talk to Isaac" button'
+          reason: 'Clicked "Talk to Isaac" button — collecting phone/email now',
+          conversationContext: getConversationSummary(chatId)
         });
+        await sendLeadAlerts(alertText);
 
-        console.log('Sending Leads Bot alert to Isaac...');
-        try {
-          await sendLeadsBotAlert(ISAAC_CHAT_ID, alertText);
-          console.log('Leads Bot alert sent');
-        } catch (error) {
-          console.error('Alert failed:', error);
-        }
-
-        // WhatsApp alert
-        if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) {
-          try {
-            await sendWhatsAppMessage(ISAAC_WHATSAPP, alertText);
-            console.log('WhatsApp alert sent');
-          } catch (error) {
-            console.error('WhatsApp alert failed:', error);
-          }
-        }
-
-        console.log(`Alerts sent to Isaac for chat ${chatId} (Talk to Isaac button)`);
         return new Response('OK', { status: 200 });
       }
 
@@ -502,62 +584,142 @@ export async function POST(req: Request) {
       const message = update.message;
       const chatId = message.chat.id.toString();
       const messageText = message.text || '';
+      const state = getState(chatId);
 
       console.log(`Telegram message from ${chatId}: ${messageText}`);
 
-      // Handle /start and /menu commands — reset conversation and show menu buttons
-      if (messageText === '/start' || messageText === '/menu') {
+      // Handle /start — reset conversation and ask for name
+      if (messageText === '/start') {
         conversationHistory.delete(chatId);
-        const welcomeText = `👋 Hi, I'm Robin — IonicX AI's assistant.
+        chatStates.set(chatId, { awaiting_name: true });
 
-I'm here to help you explore how AI can automate your business. Whether it's a smart chatbot, a professional website, or full workflow automation — let's see what's possible.
+        await sendTelegramMessage(chatId, `👋 Hi, I'm Robin — IonicX AI's assistant.\n\nBefore we get started, what's your name?`);
+        return new Response('OK', { status: 200 });
+      }
 
-What brings you here today?`;
+      // Handle /menu — show menu (no name collection needed)
+      if (messageText === '/menu') {
+        const name = state.name;
+        const greeting = name ? `Hey ${name}! Here's what I can help with:` : `Here's what I can help with:`;
+        await sendInlineKeyboard(chatId, greeting, mainMenuKeyboard);
+        return new Response('OK', { status: 200 });
+      }
+
+      // Handle awaiting_name state
+      if (state.awaiting_name) {
+        // Extract name — take the first word or two as the name, skip if it looks like a question
+        const trimmed = messageText.trim();
+        const looksLikeQuestion = /^(what|how|can|do|is|are|why|when|where|which|tell|show|help)/i.test(trimmed);
+
+        if (looksLikeQuestion || trimmed.length > 50) {
+          // User skipped name and asked a question — proceed without forcing
+          state.awaiting_name = false;
+          console.log(`User ${chatId} skipped name, proceeding with question`);
+
+          const aiResponse = await getAIResponse(chatId, messageText);
+          await sendTelegramMessage(chatId, aiResponse.response);
+
+          if (aiResponse.should_escalate) {
+            startBookingFlow(chatId, aiResponse.escalation_reason || 'Wants to speak to Isaac');
+            const name = state.name || 'there';
+            await sendTelegramMessage(chatId, `Great, ${name}! Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
+          }
+          return new Response('OK', { status: 200 });
+        }
+
+        // Store the name
+        const name = trimmed.split(/\s+/).slice(0, 3).join(' '); // Cap at 3 words
+        state.name = name;
+        state.awaiting_name = false;
+        console.log(`User ${chatId} identified as: ${name}`);
+
+        const welcomeText = `Nice to meet you, ${name}! I'm here to help you explore how AI can automate your business.\n\nWhat brings you here today?`;
         await sendInlineKeyboard(chatId, welcomeText, mainMenuKeyboard);
         return new Response('OK', { status: 200 });
+      }
+
+      // Handle booking flow — collecting phone number
+      if (state.booking_step === 'awaiting_phone') {
+        const phone = containsPhone(messageText);
+        const looksLikeSkip = /^(no|skip|nah|don't have|later|not now|i'd rather not)/i.test(messageText.trim());
+
+        if (phone) {
+          state.collected_phone = phone;
+          state.booking_step = 'awaiting_email';
+          await sendTelegramMessage(chatId, `Got it. And your email address?`);
+          return new Response('OK', { status: 200 });
+        } else if (looksLikeSkip) {
+          // User skipped phone, move to email
+          state.booking_step = 'awaiting_email';
+          await sendTelegramMessage(chatId, `No worries! How about your email address?`);
+          return new Response('OK', { status: 200 });
+        } else {
+          // Might be a phone in non-standard format, or user typed something else
+          // Check if the entire message could be a phone (digits with spaces/dashes)
+          const digitCount = (messageText.match(/\d/g) || []).length;
+          if (digitCount >= 7) {
+            state.collected_phone = messageText.trim();
+            state.booking_step = 'awaiting_email';
+            await sendTelegramMessage(chatId, `Got it. And your email address?`);
+            return new Response('OK', { status: 200 });
+          }
+          // Not a phone — maybe they want to skip or said something else
+          // Send alert with whatever we have and exit booking flow
+          await sendCompletedLeadAlert(chatId, getUserHandle(message.from));
+          state.booking_step = null;
+          const name = state.name || 'there';
+          await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. Feel free to ask me anything in the meantime.`);
+          return new Response('OK', { status: 200 });
+        }
+      }
+
+      // Handle booking flow — collecting email
+      if (state.booking_step === 'awaiting_email') {
+        const email = containsEmail(messageText);
+        const looksLikeSkip = /^(no|skip|nah|don't have|later|not now|i'd rather not)/i.test(messageText.trim());
+
+        if (email) {
+          state.collected_email = email;
+        }
+
+        // Whether they gave email, skipped, or typed something else — complete the flow
+        await sendCompletedLeadAlert(chatId, getUserHandle(message.from));
+        const name = state.name || 'there';
+        await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. In the meantime, feel free to ask me anything.`);
+        return new Response('OK', { status: 200 });
+      }
+
+      // Check for unprompted contact details mid-conversation
+      const detectedPhone = containsPhone(messageText);
+      const detectedEmail = containsEmail(messageText);
+      if (detectedPhone || detectedEmail) {
+        const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
+        const alertText = buildLeadAlertText({
+          title: 'Lead Alert: Contact Details Shared',
+          prospectName: state.name || (message.from?.first_name + (message.from?.last_name ? ' ' + message.from.last_name : '')) || 'Unknown',
+          userHandle: getUserHandle(message.from),
+          chatId,
+          timestamp: sgtTimestamp,
+          reason: 'User shared contact details unprompted',
+          phone: detectedPhone || undefined,
+          email: detectedEmail || undefined,
+          conversationContext: getConversationSummary(chatId)
+        });
+        // Send alert in background, don't block the AI response
+        sendLeadAlerts(alertText).catch(err => console.error('Unprompted contact alert failed:', err));
       }
 
       // Get AI response with conversation history
       const aiResponse = await getAIResponse(chatId, messageText);
 
-      // Send AI response WITHOUT inline buttons (no button spam on every message)
+      // Send AI response WITHOUT inline buttons (no button spam)
       await sendTelegramMessage(chatId, aiResponse.response);
 
-      // Smart handoff: if escalation needed, alert Isaac
+      // If AI flagged escalation, start booking flow instead of dead-end
       if (aiResponse.should_escalate) {
-        const escalationUser = message.from;
-        const escalationName = escalationUser?.first_name + (escalationUser?.last_name ? ' ' + escalationUser.last_name : '');
-        const escalationHandle = escalationUser?.username ? `@${escalationUser.username}` : 'No username';
-        const escalationTime = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
-
-        const alertText = buildAlertText({
-          title: 'Lead Alert from Telegram Bot',
-          userName: escalationName,
-          userHandle: escalationHandle,
-          chatId,
-          timestamp: escalationTime,
-          action: 'Escalation triggered',
-          message: messageText,
-          reason: aiResponse.escalation_reason
-        });
-
-        try {
-          await sendLeadsBotAlert(ISAAC_CHAT_ID, alertText);
-          console.log('Leads Bot alert sent');
-        } catch (error) {
-          console.error('Leads Bot alert failed, falling back to main bot:', error);
-          await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
-        }
-
-        if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) {
-          try {
-            await sendWhatsAppMessage(ISAAC_WHATSAPP, alertText);
-          } catch (error) {
-            console.error('WhatsApp alert failed:', error);
-          }
-        }
-
-        console.log(`Alerts sent to Isaac for chat ${chatId}`);
+        startBookingFlow(chatId, aiResponse.escalation_reason || 'Wants to speak to Isaac');
+        const name = state.name || 'there';
+        await sendTelegramMessage(chatId, `Great, ${name}! Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
       }
     }
 
@@ -572,8 +734,8 @@ export async function GET(req: Request) {
   return new Response(JSON.stringify({
     status: 'Telegram bot webhook is active',
     bot: 'Robin - IonicX AI Sales Assistant',
-    version: '3.0.0',
-    features: ['AI conversations', 'conversation memory', 'lead alerts', 'pain-first selling', 'intent-based escalation', 'date awareness']
+    version: '4.0.0',
+    features: ['AI conversations', 'conversation memory', 'lead alerts', 'pain-first selling', 'intent-based escalation', 'date awareness', 'name collection', 'booking flow']
   }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
