@@ -7,7 +7,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const ISAAC_CHAT_ID = "1729085064"; // For Telegram escalation alerts
+const ISAAC_CHAT_ID = 1729085064; // For Telegram escalation alerts (must be number)
 const ISAAC_WHATSAPP = "6580268821"; // For WhatsApp escalation alerts
 
 // WhatsApp Cloud API config (for sending alerts to Isaac)
@@ -336,11 +336,14 @@ export async function POST(req: Request) {
 
 Reply: https://t.me/IonicXAI_Assistant`;
         
-        await sendTelegramMessage(ISAAC_CHAT_ID, alertText);
+        console.log('Sending Telegram alert to Isaac...');
+        await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
+        console.log('Telegram alert sent successfully');
         
-        // Send WhatsApp alert to Isaac
-        try {
-          const whatsAppAlert = `🚨 Lead Alert: Talk to Isaac
+        // Send WhatsApp alert to Isaac (skip if WhatsApp API not configured)
+        if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) {
+          try {
+            const whatsAppAlert = `🚨 Lead Alert: Talk to Isaac
 
 User: ${userName}
 Username: ${userHandle}
@@ -348,9 +351,13 @@ Chat ID: ${chatId}
 Action: Clicked "Talk to Isaac" button
 
 Reply on Telegram: https://t.me/IonicXAI_Assistant`;
-          await sendWhatsAppMessage(ISAAC_WHATSAPP, whatsAppAlert);
-        } catch (error) {
-          console.error('WhatsApp alert failed:', error);
+            await sendWhatsAppMessage(ISAAC_WHATSAPP, whatsAppAlert);
+            console.log('WhatsApp alert sent successfully');
+          } catch (error) {
+            console.error('WhatsApp alert failed:', error);
+          }
+        } else {
+          console.log('WhatsApp alerts skipped: API not configured');
         }
         
         console.log(`Alerts sent to Isaac for chat ${chatId} (Talk to Isaac button)`);
