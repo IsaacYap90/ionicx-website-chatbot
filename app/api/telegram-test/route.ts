@@ -14,6 +14,7 @@ Received update type: ${update.callback_query ? 'callback_query' : update.messag
 
 Time: ${new Date().toISOString()}`;
     
+    console.log('Sending to Telegram API...');
     const response = await fetch(`https://api.telegram.org/bot${LEADS_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -24,10 +25,18 @@ Time: ${new Date().toISOString()}`;
       })
     });
     
-    const data = await response.json();
-    console.log('Alert response:', JSON.stringify(data));
+    console.log('Response status:', response.status);
+    const responseText = await response.text();
+    console.log('Response text:', responseText);
     
-    return new Response(JSON.stringify({ ok: true, alert_sent: data.ok }), {
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = { ok: false, raw: responseText };
+    }
+    
+    return new Response(JSON.stringify({ ok: true, alert_sent: data.ok, response: data }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
