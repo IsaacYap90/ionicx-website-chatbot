@@ -43,20 +43,25 @@ function addToHistory(chatId: string, role: string, content: string) {
   }
 }
 
-const HUMAN_KEYWORDS = [
-  "human", "agent", "real person", "talk to a person", "speak to someone",
-  "i want human support", "get me isaac", "contact isaac", "talk to isaac",
-  "speak to a human", "live agent", "real human", "customer service",
-  "speak to a person", "talk to someone", "human support", "live support",
-  "connect me", "transfer me", "isaac"
-];
+// Dynamic system prompt with current SGT date/time injected on every call
+function getSystemPrompt(): string {
+  const now = new Date().toLocaleString('en-SG', {
+    timeZone: 'Asia/Singapore',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
 
-function isHumanEscalation(message: string): boolean {
-  const lower = message.toLowerCase().trim();
-  return HUMAN_KEYWORDS.some((keyword) => lower.includes(keyword));
-}
+  return `You are Robin — IonicX AI's friendly, consultative sales assistant on Telegram. IonicX is a Singapore-based AI technology company and NVIDIA Connect Partner that builds AI-powered solutions for SMEs in Singapore and Johor Bahru.
 
-const systemPrompt = `You are Robin — IonicX AI's friendly, consultative sales assistant on Telegram. IonicX is a Singapore-based AI technology company that builds AI-powered solutions for SMEs.
+Current date and time (SGT): ${now}. Always use this as today's date. Never guess or hallucinate dates.
+
+About Isaac Yap — Founder of IonicX AI:
+Isaac is the founder of IonicX AI. He's a former logistics professional and Muay Thai coach turned self-taught developer who built IonicX to help Singapore and JB SMEs adopt AI. IonicX is now an NVIDIA Connect Partner. When users ask about Isaac, share this background naturally.
 
 Knowledge base:
 ${knowledgeBase}
@@ -84,22 +89,34 @@ Pricing (only share when asked or when it naturally fits):
 
 Rules:
 - Respond in the same language the user writes in (English or Chinese)
-- Keep responses concise — under 400 characters for Telegram
+- Keep responses to 2-3 sentences max. Be conversational, not essay-length.
+- Only use numbered lists or bullet points if the user explicitly asks for detail.
+- Ask one question at a time. Do not stack multiple questions.
 - Be warm, curious, and genuinely helpful — not pushy
-- Ask follow-up questions to understand their business better
 - When you sense buying intent or the user wants to discuss specifics, suggest they tap "Talk to Isaac"
 - If you don't know something, be honest and offer to connect them with Isaac
+- You CANNOT book meetings or arrange calls yourself. When a user wants to book or schedule, say "Isaac will reach out to confirm" — never say "I'll arrange it"
 - Do NOT proactively mention EIS. If asked, say: "Budget 2026 announced the EIS expansion for AI spending. IRAS is publishing detailed guidelines by mid-2026. We will keep you updated once confirmed."
 - Never make up facts about IonicX
+
+Escalation rules — set should_escalate to true ONLY when:
+- User shares a phone number, email address, or other contact details (include the contact info in escalation_reason)
+- User EXPLICITLY asks to speak to a human, real person, or Isaac (e.g. "can I talk to Isaac", "connect me to someone", "I want to speak to a real person")
+
+Do NOT set should_escalate for:
+- Questions ABOUT Isaac (e.g. "who is Isaac", "what does Isaac do")
+- General conversation that happens to mention Isaac's name
+- Casual affirmations like "yes", "yes please", "sure"
+- Exploratory questions about consultations (e.g. "how does a consultation work?")
+- General buying interest without explicit request for human contact
 
 Format response as JSON:
 {
     "response": "Your response to the user",
     "should_escalate": false,
     "escalation_reason": ""
+}`;
 }
-
-Set should_escalate to true when the user explicitly asks for a human, mentions Isaac, or shows strong buying intent.`;
 
 async function sendTelegramMessage(chatId: string, text: string, options: any = {}) {
   try {
@@ -241,20 +258,11 @@ async function sendLeadsBotAlert(chatId: string | number, text: string) {
 }
 
 async function getAIResponse(chatId: string, message: string): Promise<{ response: string; should_escalate: boolean; escalation_reason: string }> {
-  // Handle human escalation locally
-  if (isHumanEscalation(message)) {
-    return {
-      response: "Sure! Here's how to reach Isaac directly:\n\n📧 isaac@ionicx.ai\n📱 WhatsApp: +65 8026 8821\n\nHe typically responds within a few hours during business hours (Mon-Fri 9am-6pm SGT).",
-      should_escalate: true,
-      escalation_reason: "User requested human agent"
-    };
-  }
-
   try {
-    // Build messages with conversation history
+    // Build messages with conversation history and dynamic system prompt
     const history = getHistory(chatId);
     const messages = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: getSystemPrompt() },
       ...history,
       { role: "user", content: message }
     ];
@@ -376,7 +384,7 @@ Want a custom demo for your business? Let's talk!`,
 
   menu_contact: `📞 *Contact IonicX AI*
 
-*Isaac Yap*
+*Isaac Yap — Founder*
 📧 isaac@ionicx.ai
 🌐 ionicx.ai
 📱 WhatsApp: +65 8026 8821
@@ -435,7 +443,7 @@ export async function POST(req: Request) {
       // Answer the callback query (fire and forget)
       answerCallbackQuery(query.id).catch(err => console.error('Failed to answer callback:', err));
 
-      // Handle "Talk to Isaac" button - trigger alerts
+      // Handle "Talk to Isaac" button - trigger contact card + alerts
       if (data === 'btn_human') {
         console.log('Processing btn_human click...');
 
@@ -482,7 +490,7 @@ export async function POST(req: Request) {
         return new Response('OK', { status: 200 });
       }
 
-      // Send response based on button clicked
+      // Send response based on button clicked (menu buttons get inline keyboard)
       const responseText = menuResponses[data] || menuResponses['btn_menu'];
       await sendInlineKeyboard(chatId, responseText, mainMenuKeyboard);
 
@@ -497,7 +505,7 @@ export async function POST(req: Request) {
 
       console.log(`Telegram message from ${chatId}: ${messageText}`);
 
-      // Handle /start and /menu commands — reset conversation
+      // Handle /start and /menu commands — reset conversation and show menu buttons
       if (messageText === '/start' || messageText === '/menu') {
         conversationHistory.delete(chatId);
         const welcomeText = `👋 Hi, I'm Robin — IonicX AI's assistant.
@@ -512,8 +520,8 @@ What brings you here today?`;
       // Get AI response with conversation history
       const aiResponse = await getAIResponse(chatId, messageText);
 
-      // Send AI response with menu keyboard
-      await sendInlineKeyboard(chatId, aiResponse.response, mainMenuKeyboard);
+      // Send AI response WITHOUT inline buttons (no button spam on every message)
+      await sendTelegramMessage(chatId, aiResponse.response);
 
       // Smart handoff: if escalation needed, alert Isaac
       if (aiResponse.should_escalate) {
@@ -564,8 +572,8 @@ export async function GET(req: Request) {
   return new Response(JSON.stringify({
     status: 'Telegram bot webhook is active',
     bot: 'Robin - IonicX AI Sales Assistant',
-    version: '2.0.0',
-    features: ['AI conversations', 'conversation memory', 'lead alerts', 'pain-first selling']
+    version: '3.0.0',
+    features: ['AI conversations', 'conversation memory', 'lead alerts', 'pain-first selling', 'intent-based escalation', 'date awareness']
   }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
