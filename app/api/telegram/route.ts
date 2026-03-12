@@ -24,11 +24,11 @@ const WHATSAPP_HEADERS = () => ({
 // Load knowledge base
 const knowledgeBase = loadKnowledgeBase();
 
-// In-memory conversation history (per chat ID, survives across warm invocations)
+// ─── State management ───────────────────────────────────────────────────────
+
 const conversationHistory = new Map<string, { role: string; content: string }[]>();
 const MAX_HISTORY = 20;
 
-// Per-chat state: name, booking flow, etc.
 interface ChatState {
   name?: string;
   awaiting_name?: boolean;
@@ -40,28 +40,84 @@ interface ChatState {
 const chatStates = new Map<string, ChatState>();
 
 function getState(chatId: string): ChatState {
-  if (!chatStates.has(chatId)) {
-    chatStates.set(chatId, {});
-  }
+  if (!chatStates.has(chatId)) chatStates.set(chatId, {});
   return chatStates.get(chatId)!;
 }
 
 function getHistory(chatId: string): { role: string; content: string }[] {
-  if (!conversationHistory.has(chatId)) {
-    conversationHistory.set(chatId, []);
-  }
+  if (!conversationHistory.has(chatId)) conversationHistory.set(chatId, []);
   return conversationHistory.get(chatId)!;
 }
 
 function addToHistory(chatId: string, role: string, content: string) {
   const history = getHistory(chatId);
   history.push({ role, content });
-  if (history.length > MAX_HISTORY) {
-    history.splice(0, history.length - MAX_HISTORY);
-  }
+  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
 }
 
-// Dynamic system prompt with current SGT date/time injected on every call
+function getTelegramName(from: any): string {
+  return (from?.first_name || '') + (from?.last_name ? ' ' + from.last_name : '');
+}
+
+function getUserHandle(from: any): string {
+  return from?.username ? `@${from.username}` : 'No username';
+}
+
+// ─── Keyboards ──────────────────────────────────────────────────────────────
+
+// Main menu — only after /start (post-name), /menu
+const mainMenuKeyboard = [
+  [
+    { text: '🚀 Services', callback_data: 'menu_services' },
+    { text: '💰 Pricing', callback_data: 'menu_pricing' }
+  ],
+  [
+    { text: '🎯 Our Work', callback_data: 'menu_demos' },
+    { text: '👤 Talk to Isaac', callback_data: 'btn_book' }
+  ]
+];
+
+// CTA buttons — after EVERY AI response
+const ctaKeyboard = [
+  [
+    { text: '📅 Book a Free Consultation', callback_data: 'btn_book' },
+    { text: '❓ Ask Another Question', callback_data: 'btn_ask' }
+  ]
+];
+
+// Menu button responses
+const menuResponses: Record<string, string> = {
+  menu_services: `🚀 *IonicX AI* builds AI-powered solutions for Singapore SMEs.
+
+1. AI Chatbots (WhatsApp/Web) — automate customer enquiries 24/7
+
+2. Professional Websites — designed to convert visitors into leads
+
+3. Lead Generation & Workflow Automation — capture leads and streamline processes
+
+We also build custom AI solutions tailored to your specific workflow.`,
+
+  menu_pricing: `💰 *IonicX AI Pricing:*
+
+1. *Starter — S$2,888 + S$888/year* — 5-page website + basic chatbot
+
+2. *Growth — S$5,888 + S$1,288/year* — 10-page website + advanced AI
+
+3. *Scale — S$8,888 + S$1,588/year* — Custom web app + full automation
+
+Enterprise and custom builds also available.`,
+
+  menu_demos: `🎯 *See Our Work:*
+
+1. Fab The Stretch Lad — fabthestretchlad.vercel.app
+
+2. TattByLyds — tattbylyds.vercel.app
+
+Want a custom demo for your business?`
+};
+
+// ─── System prompt ──────────────────────────────────────────────────────────
+
 function getSystemPrompt(userName?: string): string {
   const now = new Date().toLocaleString('en-SG', {
     timeZone: 'Asia/Singapore',
@@ -74,7 +130,9 @@ function getSystemPrompt(userName?: string): string {
     hour12: true
   });
 
-  const nameContext = userName ? `\nThe user's name is ${userName}. Use their name naturally in responses (not every message, but occasionally to keep it personal).` : '';
+  const nameContext = userName
+    ? `\nThe user's name is ${userName}. Use their name naturally in responses (not every message, but occasionally to keep it personal).`
+    : '';
 
   return `You are Robin — IonicX AI's friendly, consultative sales assistant on Telegram. IonicX is a Singapore-based AI technology company and NVIDIA Connect Partner that builds AI-powered solutions for SMEs in Singapore and Johor Bahru.
 
@@ -92,7 +150,7 @@ Your approach — PAIN-FIRST SELLING:
 2. Listen and empathise with their pain points
 3. Connect their specific problems to IonicX solutions
 4. Only then mention pricing if relevant
-5. Always guide towards booking a free consultation with Isaac
+5. Guide towards booking a free consultation with Isaac
 
 What IonicX builds:
 - AI Chatbots (WhatsApp & Web) — automate customer enquiries 24/7
@@ -109,11 +167,11 @@ Pricing (only share when asked or when it naturally fits):
 - Custom builds available for unique requirements
 
 STRICT RESPONSE FORMAT RULES:
-- Maximum 3 numbered points per response. No paragraphs. No exceptions.
-- Each numbered point should be one sentence.
+- Always respond with exactly 3 numbered points. No paragraphs. No exceptions.
+- Each numbered point should be 1-2 sentences max.
 - Use "1. 2. 3." format, NOT dashes or bullet points.
 - IMPORTANT: Put each numbered point on its own line with a blank line between them for readability on Telegram.
-- End with a question or CTA on a new line after the points.
+- Do NOT end with a question or CTA — the system automatically shows "Book a Free Consultation" and "Ask Another Question" buttons after your response.
 - Example format:
 
 1. We can build a 24/7 AI chatbot to handle your customer enquiries automatically.
@@ -122,66 +180,40 @@ STRICT RESPONSE FORMAT RULES:
 
 3. Lead capture system so you never miss a potential client again.
 
-Would you like to explore any of these further?
-
-- If the user replies with just a number (e.g. "2"), map it to the corresponding numbered point from your last response and continue the conversation about that specific topic.
+- If the user replies with just a number (e.g. "2"), expand on that specific numbered point from your last response with 3 new numbered sub-points going deeper on that topic.
 - Respond in the same language the user writes in (English or Chinese)
-- Ask one question at a time. Do not stack multiple questions.
 - Be warm, curious, and genuinely helpful — not pushy
 
 Other rules:
-- When you sense buying intent or the user wants to discuss specifics, suggest they tap "Talk to Isaac"
-- If you don't know something, be honest and offer to connect them with Isaac
-- When a user wants to book, schedule, or speak to Isaac, set should_escalate to true so the system can collect their details. Do NOT say "I'll arrange for Isaac" or handle booking yourself — the system handles the booking flow automatically.
+- Your job is to qualify prospects and hand off to Isaac within 5-6 messages. You are not a consultant.
+- Do NOT handle booking or scheduling yourself. The system manages that via buttons.
 - Do NOT proactively mention EIS. If asked, say: "Budget 2026 announced the EIS expansion for AI spending. IRAS is publishing detailed guidelines by mid-2026. We will keep you updated once confirmed."
 - Never make up facts about IonicX
 
-Escalation rules — set should_escalate to true ONLY when:
-- User shares a phone number, email address, or other contact details (include the contact info in escalation_reason)
-- User EXPLICITLY asks to speak to a human, real person, or Isaac (e.g. "can I talk to Isaac", "connect me to someone", "I want to speak to a real person")
-- User wants to book a consultation or schedule a call
-
-Do NOT set should_escalate for:
-- Questions ABOUT Isaac (e.g. "who is Isaac", "what does Isaac do")
-- General conversation that happens to mention Isaac's name
-- Casual affirmations like "yes", "yes please", "sure"
-- Exploratory questions about consultations (e.g. "how does a consultation work?")
-- General buying interest without explicit request for human contact
-
 Format response as JSON:
 {
-    "response": "Your response to the user",
-    "should_escalate": false,
-    "escalation_reason": ""
+    "response": "Your 3 numbered points here"
 }`;
 }
+
+// ─── Telegram helpers ───────────────────────────────────────────────────────
 
 async function sendTelegramMessage(chatId: string, text: string, options: any = {}) {
   try {
     const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: 'Markdown',
-        ...options
-      })
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', ...options })
     });
-
     const data = await response.json();
     if (!data.ok) {
       console.error('Telegram send failed, retrying without Markdown:', data.description);
-      const retryResponse = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      const retry = await fetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: text.replace(/[*_`\[\]]/g, ''),
-          ...options
-        })
+        body: JSON.stringify({ chat_id: chatId, text: text.replace(/[*_`\[\]]/g, ''), ...options })
       });
-      return retryResponse.json();
+      return retry.json();
     }
     return data;
   } catch (error) {
@@ -195,27 +227,17 @@ async function sendInlineKeyboard(chatId: string, text: string, buttons: any[][]
     const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: buttons }
-      })
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } })
     });
-
     const data = await response.json();
     if (!data.ok) {
       console.error('Inline keyboard Markdown failed, retrying:', data.description);
-      const retryResponse = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      const retry = await fetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: text.replace(/[*_`\[\]]/g, ''),
-          reply_markup: { inline_keyboard: buttons }
-        })
+        body: JSON.stringify({ chat_id: chatId, text: text.replace(/[*_`\[\]]/g, ''), reply_markup: { inline_keyboard: buttons } })
       });
-      return retryResponse.json();
+      return retry.json();
     }
     return data;
   } catch (error) {
@@ -241,15 +263,8 @@ async function sendWhatsAppMessage(to: string, text: string) {
     const response = await fetch(WHATSAPP_API(), {
       method: 'POST',
       headers: WHATSAPP_HEADERS(),
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to,
-        type: 'text',
-        text: { body: text }
-      })
+      body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { body: text } })
     });
-
     const data = await response.json();
     console.log('WhatsApp alert sent:', data);
     return data;
@@ -259,31 +274,18 @@ async function sendWhatsAppMessage(to: string, text: string) {
   }
 }
 
-// Send alert via IonicX Leads Bot — NO Markdown to avoid underscore parsing issues
+// ─── Lead alerts ────────────────────────────────────────────────────────────
+
 async function sendLeadsBotAlert(chatId: string | number, text: string) {
   const url = `${LEADS_BOT_API}/sendMessage`;
-  const payload = {
-    chat_id: chatId,
-    text: text
-  };
-
-  console.log('Sending Leads Bot alert to:', url);
-
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ chat_id: chatId, text })
     });
-
     const data = await response.json();
-    console.log('Leads Bot response:', JSON.stringify(data));
-
-    if (!data.ok) {
-      console.error('Leads Bot API error:', data.description);
-      throw new Error(data.description);
-    }
-
+    if (!data.ok) throw new Error(data.description);
     console.log('Leads Bot alert sent successfully');
     return data;
   } catch (error) {
@@ -292,59 +294,40 @@ async function sendLeadsBotAlert(chatId: string | number, text: string) {
   }
 }
 
-// Build plain-text alert (no Markdown to avoid URL underscore issues)
 function buildLeadAlertText(params: {
-  title: string;
-  prospectName: string;
-  userHandle: string;
-  chatId: string;
-  timestamp: string;
-  reason: string;
-  phone?: string;
-  email?: string;
-  conversationContext?: string;
+  title: string; prospectName: string; userHandle: string; chatId: string;
+  timestamp: string; reason: string; phone?: string; email?: string; conversationContext?: string;
 }): string {
-  let text = `🚨 ${params.title}\n\n`;
-  text += `Name: ${params.prospectName}\n`;
-  text += `Username: ${params.userHandle}\n`;
-  text += `Chat ID: ${params.chatId}\n`;
+  let text = `🚨 ${params.title}\n\nName: ${params.prospectName}\nUsername: ${params.userHandle}\nChat ID: ${params.chatId}\n`;
   if (params.phone) text += `Phone: ${params.phone}\n`;
   if (params.email) text += `Email: ${params.email}\n`;
-  text += `Reason: ${params.reason}\n`;
-  text += `Time (SGT): ${params.timestamp}\n`;
+  text += `Reason: ${params.reason}\nTime (SGT): ${params.timestamp}\n`;
   if (params.conversationContext) text += `Context: ${params.conversationContext}\n`;
   text += `\nReply: https://t.me/IonicXAI_Assistant`;
   return text;
 }
 
-// Send lead alert to all channels
 async function sendLeadAlerts(alertText: string) {
   try {
     await sendLeadsBotAlert(ISAAC_CHAT_ID, alertText);
-    console.log('Leads Bot alert sent');
   } catch (error) {
-    console.error('Leads Bot alert failed, falling back to main bot:', error);
+    console.error('Leads Bot failed, falling back to main bot:', error);
     await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
   }
-
   if (process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) {
-    try {
-      await sendWhatsAppMessage(ISAAC_WHATSAPP, alertText);
-    } catch (error) {
-      console.error('WhatsApp alert failed:', error);
-    }
+    sendWhatsAppMessage(ISAAC_WHATSAPP, alertText).catch(err => console.error('WhatsApp alert failed:', err));
   }
 }
 
-// Get a short summary of the last few conversation messages for alert context
 function getConversationSummary(chatId: string): string {
   const history = getHistory(chatId);
-  const recent = history.slice(-6); // last 3 exchanges
+  const recent = history.slice(-6);
   if (recent.length === 0) return 'No prior conversation';
   return recent.map(m => `${m.role === 'user' ? 'User' : 'Robin'}: ${m.content.substring(0, 100)}`).join('\n');
 }
 
-// Start the booking flow for a chat
+// ─── Booking flow ───────────────────────────────────────────────────────────
+
 function startBookingFlow(chatId: string, reason: string) {
   const state = getState(chatId);
   state.booking_step = 'awaiting_phone';
@@ -353,32 +336,36 @@ function startBookingFlow(chatId: string, reason: string) {
   state.collected_email = undefined;
 }
 
-// Send a complete lead alert with all collected info
 async function sendCompletedLeadAlert(chatId: string, userHandle: string, telegramName?: string) {
   const state = getState(chatId);
   const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
-
   const alertText = buildLeadAlertText({
     title: 'New Lead from Telegram Bot',
     prospectName: state.name || telegramName || 'Unknown',
-    userHandle,
-    chatId,
-    timestamp: sgtTimestamp,
+    userHandle, chatId, timestamp: sgtTimestamp,
     reason: state.booking_reason || 'Wants to speak to Isaac',
-    phone: state.collected_phone,
-    email: state.collected_email,
+    phone: state.collected_phone, email: state.collected_email,
     conversationContext: getConversationSummary(chatId)
   });
-
   await sendLeadAlerts(alertText);
   console.log(`Lead alert sent for chat ${chatId}`);
-
-  // Reset booking state
   state.booking_step = null;
   state.booking_reason = undefined;
 }
 
-async function getAIResponse(chatId: string, message: string): Promise<{ response: string; should_escalate: boolean; escalation_reason: string }> {
+function containsPhone(text: string): string | null {
+  const m = text.match(/(?:\+?\d{1,4}[\s-]?)?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}/);
+  return m ? m[0].trim() : null;
+}
+
+function containsEmail(text: string): string | null {
+  const m = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  return m ? m[0].trim() : null;
+}
+
+// ─── AI response ────────────────────────────────────────────────────────────
+
+async function getAIResponse(chatId: string, message: string): Promise<string> {
   try {
     const state = getState(chatId);
     const history = getHistory(chatId);
@@ -390,222 +377,107 @@ async function getAIResponse(chatId: string, message: string): Promise<{ respons
 
     const response = await fetch(OPENAI_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: messages,
-        max_tokens: 500,
-        temperature: 0.5,
-      }),
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({ model: "gpt-4o-mini", messages, max_tokens: 500, temperature: 0.5 }),
     });
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
 
     const data = await response.json();
     const textContent = data.choices?.[0]?.message?.content || "";
 
+    let aiText: string;
     try {
-      let cleaned = textContent
-        .replace(/<think>[\s\S]*?<\/think>/gi, "")
-        .trim();
+      let cleaned = textContent.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
       const fenceMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
       if (fenceMatch) cleaned = fenceMatch[1].trim();
-
       const parsed = JSON.parse(cleaned);
-      const aiResponse = parsed.response || "I'm here to help! What does your business do?";
-
-      addToHistory(chatId, "user", message);
-      addToHistory(chatId, "assistant", aiResponse);
-
-      return {
-        response: aiResponse,
-        should_escalate: parsed.should_escalate || false,
-        escalation_reason: parsed.escalation_reason || ""
-      };
-    } catch (parseError) {
-      const fallback = textContent.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() || "I'm here to help! Tell me about your business and what challenges you're facing.";
-      addToHistory(chatId, "user", message);
-      addToHistory(chatId, "assistant", fallback);
-      return {
-        response: fallback,
-        should_escalate: false,
-        escalation_reason: ""
-      };
+      aiText = parsed.response || "I'm here to help! What does your business do?";
+    } catch {
+      aiText = textContent.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() || "I'm here to help! Tell me about your business and what challenges you're facing.";
     }
+
+    addToHistory(chatId, "user", message);
+    addToHistory(chatId, "assistant", aiText);
+    return aiText;
   } catch (error) {
     console.error("AI response error:", error);
-    return {
-      response: "Sorry, I'm having trouble right now. Please try again or contact Isaac directly at isaac@ionicx.ai",
-      should_escalate: true,
-      escalation_reason: "AI service error"
-    };
+    return "Sorry, I'm having trouble right now. Please try again or contact Isaac directly at isaac@ionicx.ai";
   }
 }
 
-// Main menu keyboard
-const mainMenuKeyboard = [
-  [
-    { text: '🚀 Services', callback_data: 'menu_services' },
-    { text: '💰 Pricing', callback_data: 'menu_pricing' }
-  ],
-  [
-    { text: '🎯 Our Work', callback_data: 'menu_demos' },
-    { text: '👤 Talk to Isaac', callback_data: 'btn_human' }
-  ]
-];
-
-// Knowledge base responses for menu buttons
-const menuResponses: Record<string, string> = {
-  menu_services: `🚀 *IonicX AI* builds AI-powered websites and WhatsApp chatbots for Singapore SMEs.
-
-We help businesses:
-✅ Automate customer enquiries 24/7
-✅ Capture leads from WhatsApp and web
-✅ Build professional websites that convert
-
-*Our Services:*
-• AI Chatbots (WhatsApp/Web)
-• Professional Business Websites
-• Lead Generation Systems
-• Workflow Automation
-
-Every business is different. We also build custom AI solutions tailored to your specific workflow. Tap "Talk to Isaac" to discuss.`,
-
-  menu_pricing: `💰 *IonicX AI Pricing:*
-
-*Starter — S$2,888 + S$888/year*
-• 5-page website + basic chatbot
-
-*Growth — S$5,888 + S$1,288/year*
-• 10-page website + advanced AI
-
-*Scale — S$8,888 + S$1,588/year*
-• Custom web app + full automation
-
-*Enterprise — S$15,888 + S$2,388/year*
-• Bespoke AI solutions
-
-Need something outside these tiers? We do custom builds too — tap "Talk to Isaac" to chat.`,
-
-  menu_demos: `🎯 *See Our Work:*
-
-• Fab The Stretch Lad
-  fabthestretchlad.vercel.app
-
-• TattByLyds
-  tattbylyds.vercel.app
-
-Want a custom demo for your business? Let's talk!`,
-
-  menu_contact: `📞 *Contact IonicX AI*
-
-*Isaac Yap — Founder*
-📧 isaac@ionicx.ai
-🌐 ionicx.ai
-📱 WhatsApp: +65 8026 8821
-
-*Office Hours:*
-Mon-Fri: 9am - 6pm SGT`,
-
-  btn_menu: `👋 Hello! I'm Robin — IonicX AI's assistant.
-
-I can help you with:
-🚀 Our Services
-💰 Pricing Plans
-🎯 See Our Work
-📞 Contact Us
-
-Tap a button below or just tell me about your business needs!`
-};
-
-// Detect if a message contains a phone number
-function containsPhone(text: string): string | null {
-  const phoneMatch = text.match(/(?:\+?\d{1,4}[\s-]?)?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}/);
-  return phoneMatch ? phoneMatch[0].trim() : null;
-}
-
-// Detect if a message contains an email
-function containsEmail(text: string): string | null {
-  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  return emailMatch ? emailMatch[0].trim() : null;
-}
-
-function getUserHandle(from: any): string {
-  return from?.username ? `@${from.username}` : 'No username';
-}
+// ─── Main handler ───────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
   try {
     const update = await req.json();
 
-    // Handle callback queries (button clicks)
+    // ── Callback queries (button clicks) ──
     if (update.callback_query) {
       const query = update.callback_query;
       const chatId = query.message.chat.id.toString();
       const data = query.data;
       const state = getState(chatId);
 
-      console.log(`Telegram callback from ${chatId}: ${data}`);
+      console.log(`Callback from ${chatId}: ${data}`);
+      answerCallbackQuery(query.id).catch(err => console.error('Callback answer failed:', err));
 
-      answerCallbackQuery(query.id).catch(err => console.error('Failed to answer callback:', err));
-
-      // Handle "Talk to Isaac" button — start booking flow
-      if (data === 'btn_human') {
-        console.log('Processing btn_human click — starting booking flow...');
-
+      // "Book a Free Consultation" or "Talk to Isaac" → booking flow
+      if (data === 'btn_book') {
         const name = state.name || 'there';
-        startBookingFlow(chatId, 'Clicked "Talk to Isaac" button');
+        startBookingFlow(chatId, 'Clicked "Book a Free Consultation"');
+        await sendTelegramMessage(chatId, `Great, ${name}! What's your phone number?`);
 
-        await sendTelegramMessage(chatId, `Of course, ${name}! Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
-
-        // Also send an immediate alert that someone clicked the button
-        const user = update.callback_query.from;
+        // Immediate alert that booking flow started
+        const user = query.from;
         const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
         const alertText = buildLeadAlertText({
-          title: 'Lead Alert: Talk to Isaac (collecting details)',
-          prospectName: state.name || (user.first_name + (user.last_name ? ' ' + user.last_name : '')),
-          userHandle: getUserHandle(user),
-          chatId,
-          timestamp: sgtTimestamp,
-          reason: 'Clicked "Talk to Isaac" button — collecting phone/email now',
+          title: 'Lead Alert: Booking Started',
+          prospectName: state.name || getTelegramName(user),
+          userHandle: getUserHandle(user), chatId, timestamp: sgtTimestamp,
+          reason: 'Clicked "Book a Free Consultation" — collecting phone/email',
           conversationContext: getConversationSummary(chatId)
         });
-        await sendLeadAlerts(alertText);
-
+        sendLeadAlerts(alertText).catch(err => console.error('Alert failed:', err));
         return new Response('OK', { status: 200 });
       }
 
-      // Send response based on button clicked (menu buttons get inline keyboard)
-      const responseText = menuResponses[data] || menuResponses['btn_menu'];
-      await sendInlineKeyboard(chatId, responseText, mainMenuKeyboard);
+      // "Ask Another Question" → prompt for next question
+      if (data === 'btn_ask') {
+        const name = state.name || 'there';
+        await sendTelegramMessage(chatId, `Sure, ${name}! What else would you like to know?`);
+        return new Response('OK', { status: 200 });
+      }
 
+      // Menu button responses → show response with CTA buttons
+      if (menuResponses[data]) {
+        await sendInlineKeyboard(chatId, menuResponses[data], ctaKeyboard);
+        return new Response('OK', { status: 200 });
+      }
+
+      // Fallback
+      await sendInlineKeyboard(chatId, `What would you like to know?`, mainMenuKeyboard);
       return new Response('OK', { status: 200 });
     }
 
-    // Handle regular messages with AI
+    // ── Regular messages ──
     if (update.message) {
       const message = update.message;
       const chatId = message.chat.id.toString();
       const messageText = message.text || '';
       const state = getState(chatId);
 
-      console.log(`Telegram message from ${chatId}: ${messageText}`);
+      console.log(`Message from ${chatId}: ${messageText}`);
 
-      // Handle /start — reset conversation and ask for name
+      // Step 1: /start → ask for name
       if (messageText === '/start') {
         conversationHistory.delete(chatId);
         chatStates.set(chatId, { awaiting_name: true });
-
         await sendTelegramMessage(chatId, `👋 Hi, I'm Robin — IonicX AI's assistant.\n\nBefore we get started, what's your name?`);
         return new Response('OK', { status: 200 });
       }
 
-      // Handle /menu — show menu (no name collection needed)
+      // /menu → show main menu
       if (messageText === '/menu') {
         const name = state.name;
         const greeting = name ? `Hey ${name}! Here's what I can help with:` : `Here's what I can help with:`;
@@ -613,46 +485,38 @@ export async function POST(req: Request) {
         return new Response('OK', { status: 200 });
       }
 
-      // Handle awaiting_name state
-      // Check both the explicit flag AND empty history (handles serverless cold starts
-      // where in-memory chatStates may be lost between /start and the name reply)
+      // Step 2: Awaiting name (explicit flag OR empty history fallback for cold starts)
       const history = getHistory(chatId);
       const isAwaitingName = state.awaiting_name || (!state.name && history.length === 0 && !state.booking_step);
 
       if (isAwaitingName) {
         const trimmed = messageText.trim();
         const looksLikeQuestion = /^(what|how|can|do|is|are|why|when|where|which|tell|show|help|i need|i want|i'm looking)/i.test(trimmed);
-        const looksLikeCommand = trimmed.startsWith('/');
 
-        if (looksLikeQuestion || looksLikeCommand || trimmed.length > 50) {
-          // User skipped name and asked a question — proceed without forcing
+        if (looksLikeQuestion || trimmed.startsWith('/') || trimmed.length > 50) {
+          // Skipped name — go straight to AI
           state.awaiting_name = false;
-          console.log(`User ${chatId} skipped name, proceeding with question`);
-
-          const aiResponse = await getAIResponse(chatId, messageText);
-          await sendTelegramMessage(chatId, aiResponse.response);
-
-          if (aiResponse.should_escalate) {
-            startBookingFlow(chatId, aiResponse.escalation_reason || 'Wants to speak to Isaac');
-            const bkName = state.name || 'there';
-            await sendTelegramMessage(chatId, `Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
-          }
+          const aiText = await getAIResponse(chatId, messageText);
+          await sendInlineKeyboard(chatId, aiText, ctaKeyboard);
           return new Response('OK', { status: 200 });
         }
 
-        // Store the name (cap at 3 words)
+        // Store name
         const name = trimmed.split(/\s+/).slice(0, 3).join(' ');
         state.name = name;
         state.awaiting_name = false;
         console.log(`User ${chatId} identified as: ${name}`);
 
-        const welcomeText = `Nice to meet you, ${name}! I'm here to help you explore how AI can automate your business.\n\nWhat brings you here today?`;
-        await sendInlineKeyboard(chatId, welcomeText, mainMenuKeyboard);
+        await sendInlineKeyboard(
+          chatId,
+          `Nice to meet you, ${name}! What brings you here today?`,
+          mainMenuKeyboard
+        );
         return new Response('OK', { status: 200 });
       }
 
       // === BOOKING FLOW STATE MACHINE ===
-      // When in booking flow, ONLY the state handler responds. Never call OpenAI.
+      // Sole responder during phone/email collection — never calls OpenAI
       if (state.booking_step === 'awaiting_phone') {
         const phone = containsPhone(messageText);
         const digitCount = (messageText.match(/\d/g) || []).length;
@@ -666,8 +530,8 @@ export async function POST(req: Request) {
           state.booking_step = 'awaiting_email';
           await sendTelegramMessage(chatId, `No worries! How about your email address?`);
         } else {
-          // Unrecognised input — complete flow with whatever we have
-          await sendCompletedLeadAlert(chatId, getUserHandle(message.from), (message.from?.first_name || '') + (message.from?.last_name ? ' ' + message.from.last_name : ''));
+          // Unrecognised — complete with whatever we have
+          await sendCompletedLeadAlert(chatId, getUserHandle(message.from), getTelegramName(message.from));
           const name = state.name || 'there';
           await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. Feel free to ask me anything in the meantime.`);
         }
@@ -676,48 +540,33 @@ export async function POST(req: Request) {
 
       if (state.booking_step === 'awaiting_email') {
         const email = containsEmail(messageText);
-        if (email) {
-          state.collected_email = email;
-        }
-        // Complete the flow regardless
-        await sendCompletedLeadAlert(chatId, getUserHandle(message.from), (message.from?.first_name || '') + (message.from?.last_name ? ' ' + message.from.last_name : ''));
+        if (email) state.collected_email = email;
+        await sendCompletedLeadAlert(chatId, getUserHandle(message.from), getTelegramName(message.from));
         const name = state.name || 'there';
         await sendTelegramMessage(chatId, `Thanks ${name}! Isaac will reach out to you shortly. In the meantime, feel free to ask me anything.`);
         return new Response('OK', { status: 200 });
       }
-      // === END BOOKING FLOW STATE MACHINE ===
+      // === END BOOKING FLOW ===
 
-      // Check for unprompted contact details mid-conversation (outside booking flow)
+      // Check for unprompted contact details mid-conversation
       const detectedPhone = containsPhone(messageText);
       const detectedEmail = containsEmail(messageText);
       if (detectedPhone || detectedEmail) {
         const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
         const alertText = buildLeadAlertText({
           title: 'Lead Alert: Contact Details Shared',
-          prospectName: state.name || ((message.from?.first_name || '') + (message.from?.last_name ? ' ' + message.from.last_name : '')) || 'Unknown',
-          userHandle: getUserHandle(message.from),
-          chatId,
-          timestamp: sgtTimestamp,
+          prospectName: state.name || getTelegramName(message.from) || 'Unknown',
+          userHandle: getUserHandle(message.from), chatId, timestamp: sgtTimestamp,
           reason: 'User shared contact details unprompted',
-          phone: detectedPhone || undefined,
-          email: detectedEmail || undefined,
+          phone: detectedPhone || undefined, email: detectedEmail || undefined,
           conversationContext: getConversationSummary(chatId)
         });
         sendLeadAlerts(alertText).catch(err => console.error('Unprompted contact alert failed:', err));
       }
 
-      // Get AI response with conversation history
-      const aiResponse = await getAIResponse(chatId, messageText);
-
-      if (aiResponse.should_escalate) {
-        // Booking flow takes over — suppress the AI message entirely
-        startBookingFlow(chatId, aiResponse.escalation_reason || 'Wants to speak to Isaac');
-        const name = state.name || 'there';
-        await sendTelegramMessage(chatId, `Sure thing, ${name}! Let me get your details so Isaac can reach you.\n\nWhat's your phone number?`);
-      } else {
-        // Normal AI response — no escalation
-        await sendTelegramMessage(chatId, aiResponse.response);
-      }
+      // Steps 3-5: AI response + CTA buttons (Book / Ask Another)
+      const aiText = await getAIResponse(chatId, messageText);
+      await sendInlineKeyboard(chatId, aiText, ctaKeyboard);
     }
 
     return new Response('OK', { status: 200 });
@@ -731,8 +580,8 @@ export async function GET(req: Request) {
   return new Response(JSON.stringify({
     status: 'Telegram bot webhook is active',
     bot: 'Robin - IonicX AI Sales Assistant',
-    version: '4.1.0',
-    features: ['AI conversations', 'conversation memory', 'lead alerts', 'pain-first selling', 'intent-based escalation', 'date awareness', 'name collection', 'booking flow']
+    version: '5.0.0',
+    features: ['AI conversations', 'conversation memory', 'lead alerts', 'pain-first selling', 'booking flow', 'CTA loop', 'name collection']
   }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
