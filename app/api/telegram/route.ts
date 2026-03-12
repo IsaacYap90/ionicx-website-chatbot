@@ -407,7 +407,7 @@ What brings you here today?`;
 Reply to user: https://t.me/IonicXAI_Assistant`;
         
         // Send Telegram alert
-        await sendTelegramMessage(ISAAC_CHAT_ID, alertText);
+        await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
         
         // Send WhatsApp alert
         try {
