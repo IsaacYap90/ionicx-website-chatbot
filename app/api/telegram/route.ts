@@ -107,8 +107,8 @@ const mainMenuKeyboard = [
 // CTA buttons — after EVERY AI response
 const ctaKeyboard = [
   [
-    { text: '📅 Book a Free Consultation', callback_data: 'btn_book' },
-    { text: '❓ Ask Another Question', callback_data: 'btn_ask' }
+    { text: '📅 Book a Call', callback_data: 'btn_book' },
+    { text: '❓ Ask More', callback_data: 'btn_ask' }
   ]
 ];
 
@@ -198,7 +198,7 @@ STRICT RESPONSE FORMAT RULES:
 - Each numbered point should be 1-2 sentences max.
 - Use "1. 2. 3." format, NOT dashes or bullet points.
 - IMPORTANT: Put each numbered point on its own line with a blank line between them for readability on Telegram.
-- Do NOT end with a question or CTA — the system automatically shows "Book a Free Consultation" and "Ask Another Question" buttons after your response.
+- Do NOT end with a question or CTA — the system automatically shows "Book a Call" and "Ask More" buttons after your response.
 - Example format:
 
 1. We can build a 24/7 AI chatbot to handle your customer enquiries automatically.
@@ -450,11 +450,11 @@ export async function POST(req: Request) {
       console.log(`Callback from ${chatId}: ${data}`);
       answerCallbackQuery(query.id).catch(err => console.error('Callback answer failed:', err));
 
-      // "Book a Free Consultation" or "Talk to Isaac" → booking flow
+      // "Book a Call" or "Talk to Isaac" → booking flow
       if (data === 'btn_book') {
         const resolved = getStoredName(chatId, getTelegramName(query.from));
         const name = resolved !== 'Unknown' ? resolved : 'there';
-        startBookingFlow(chatId, 'Clicked "Book a Free Consultation"');
+        startBookingFlow(chatId, 'Clicked "Book a Call"');
         await sendTelegramMessage(chatId, `Great, ${name}! What's your phone number?`);
 
         // Immediate alert that booking flow started
@@ -464,14 +464,14 @@ export async function POST(req: Request) {
           title: 'Lead Alert: Booking Started',
           prospectName: getStoredName(chatId, getTelegramName(user)),
           userHandle: getUserHandle(user), chatId, timestamp: sgtTimestamp,
-          reason: 'Clicked "Book a Free Consultation" — collecting phone/email',
+          reason: 'Clicked "Book a Call" — collecting phone/email',
           conversationContext: getConversationSummary(chatId)
         });
         sendLeadAlerts(alertText).catch(err => console.error('Alert failed:', err));
         return new Response('OK', { status: 200 });
       }
 
-      // "Ask Another Question" → prompt for next question
+      // "Ask More" → prompt for next question
       if (data === 'btn_ask') {
         const resolved = getStoredName(chatId, getTelegramName(query.from));
         const name = resolved !== 'Unknown' ? resolved : 'there';
