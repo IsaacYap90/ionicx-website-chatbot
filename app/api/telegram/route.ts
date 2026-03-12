@@ -478,7 +478,9 @@ Reply on Telegram: https://t.me/IonicXAI_Assistant`;
 export async function GET(req: Request) {
   return new Response(JSON.stringify({
     status: 'Telegram bot webhook is active',
-    bot: 'Robin - IonicX AI Sales Assistant'
+    bot: 'Robin - IonicX AI Sales Assistant',
+    version: '1.2.0',
+    alerts: 'Leads Bot enabled'
   }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
