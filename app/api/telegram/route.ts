@@ -496,18 +496,6 @@ export async function POST(req: Request) {
         const name = resolved !== 'Unknown' ? resolved : 'there';
         startBookingFlow(chatId, 'Clicked "Book a Call"');
         await sendTelegramMessage(chatId, `Great, ${name}! What's your phone number?`);
-
-        // Immediate alert that booking flow started
-        const user = query.from;
-        const sgtTimestamp = new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' });
-        const alertText = buildLeadAlertText({
-          title: 'Lead Alert: Booking Started',
-          prospectName: getStoredName(chatId, getTelegramName(user)),
-          userHandle: getUserHandle(user), chatId, timestamp: sgtTimestamp,
-          reason: 'Clicked "Book a Call" — collecting phone/email',
-          conversationContext: getConversationSummary(chatId)
-        });
-        sendLeadAlerts(alertText).catch(err => console.error('Alert failed:', err));
         return new Response('OK', { status: 200 });
       }
 
