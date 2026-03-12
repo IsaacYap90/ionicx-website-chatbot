@@ -390,17 +390,23 @@ Reply: https://t.me/IonicXAI_Assistant`;
         
         console.log('Sending Leads Bot alert to Isaac...');
         try {
-          await sendLeadsBotAlert(ISAAC_CHAT_ID, alertText);
-          console.log('Leads Bot alert sent successfully');
+          // Inline Leads Bot alert sending
+          const leadsResponse = await fetch(`${LEADS_BOT_API}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: ISAAC_CHAT_ID,
+              text: alertText,
+              parse_mode: 'Markdown'
+            })
+          });
+          const leadsData = await leadsResponse.json();
+          console.log('Leads Bot response:', leadsData.ok);
+          if (!leadsData.ok) {
+            console.error('Leads Bot API error:', leadsData.description);
+          }
         } catch (error) {
           console.error('Leads Bot alert failed:', error);
-          // Fallback to main bot
-          try {
-            await sendTelegramMessage(ISAAC_CHAT_ID.toString(), alertText);
-            console.log('Fallback alert sent via main bot');
-          } catch (fallbackError) {
-            console.error('Fallback alert also failed:', fallbackError);
-          }
         }
         
         // Send WhatsApp alert to Isaac (skip if WhatsApp API not configured)
